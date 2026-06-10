@@ -29,9 +29,9 @@ class SentimentService:
             select(SentimentData)
             .where(
                 SentimentData.stock_code == stock_code,
-                SentimentData.created_at >= cutoff_date,
+                SentimentData.time >= cutoff_date,  # 修正：created_at → time
             )
-            .order_by(desc(SentimentData.created_at))
+            .order_by(desc(SentimentData.time))
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()
@@ -91,13 +91,12 @@ class SentimentService:
         else:
             signal = "neutral"
 
-        # 關鍵詞 (從標題中提取)
+        # 關鍵詞 (從 raw_text 中提取，SentimentData 無 title 欄位)
         keywords = []
         for s in sentiment_data_list[:10]:
-            if s.title:
-                # 簡單關鍵詞提取 (實際應使用 NLP)
-                words = s.title.split()
-                keywords.extend(words[:5])
+            if s.raw_text:
+                words = s.raw_text.split()[:5]
+                keywords.extend(words)
 
         return {
             "positive_ratio": round(positive_ratio, 3),
@@ -120,8 +119,8 @@ class SentimentService:
         cutoff_date = datetime.now() - timedelta(days=7)
         stmt = (
             select(SentimentData)
-            .where(SentimentData.created_at >= cutoff_date)
-            .order_by(desc(SentimentData.created_at))
+            .where(SentimentData.time >= cutoff_date)  # 修正：created_at → time
+            .order_by(desc(SentimentData.time))
         )
         result = await self.db.execute(stmt)
         all_data = result.scalars().all()

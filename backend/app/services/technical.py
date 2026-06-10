@@ -4,7 +4,6 @@
 """
 import logging
 from datetime import date, timedelta
-from typing import Optional
 
 import numpy as np
 from sqlalchemy import select
@@ -74,7 +73,7 @@ class TechnicalService:
         avg_gain = np.mean(gains[:period])
         avg_loss = np.mean(losses[:period])
 
-        rsi_values = [None] * (period)  # First 'period' values are None
+        rsi_values = [None] * period
 
         rs = avg_gain / (avg_loss if avg_loss != 0 else 0.0001)
         rsi_values.append(100 - (100 / (1 + rs)))
@@ -94,9 +93,6 @@ class TechnicalService:
         if len(closes) < slow:
             return {"macd": [], "signal": [], "histogram": []}
 
-        closes_arr = np.array(closes)
-
-        # EMA 計算
         def ema(data, period):
             multiplier = 2 / (period + 1)
             result = [data[0]]
@@ -106,20 +102,13 @@ class TechnicalService:
 
         ema_fast = ema(closes, fast)
         ema_slow = ema(closes, slow)
-
         macd_line = [f - s for f, s in zip(ema_fast, ema_slow)]
         signal_line = ema(macd_line, signal)
         histogram = [m - s for m, s in zip(macd_line, signal_line)]
 
-        return {
-            "macd": macd_line,
-            "signal": signal_line,
-            "histogram": histogram,
-        }
+        return {"macd": macd_line, "signal": signal_line, "histogram": histogram}
 
-    def _calculate_kdj(
-        self, bars: list[dict], period: int = 9
-    ) -> dict:
+    def _calculate_kdj(self, bars: list[dict], period: int = 9) -> dict:
         """計算 KDJ"""
         if len(bars) < period:
             return {"k": [], "d": [], "j": []}
@@ -133,11 +122,7 @@ class TechnicalService:
             lowest = min(b["low"] for b in window)
             highest = max(b["high"] for b in window)
 
-            if highest == lowest:
-                rsv = 50.0
-            else:
-                rsv = (bars[i]["close"] - lowest) / (highest - lowest) * 100
-
+            rsv = (bars[i]["close"] - lowest) / (highest - lowest) * 100 if highest != lowest else 50.0
             k = (2 / 3) * k_values[-1] + (1 / 3) * rsv
             d = (2 / 3) * d_values[-1] + (1 / 3) * k
             j = 3 * k - 2 * d
@@ -148,17 +133,12 @@ class TechnicalService:
 
         return {"k": k_values, "d": d_values, "j": j_values}
 
-    def _calculate_bollinger(
-        self, closes: list[float], period: int = 20, std_dev: float = 2.0
-    ) -> dict:
+    def _calculate_bollinger(self, closes: list[float], period: int = 20, std_dev: float = 2.0) -> dict:
         """計算布林帶"""
         if len(closes) < period:
             return {"upper": [], "middle": [], "lower": []}
 
-        upper = []
-        middle = []
-        lower = []
-
+        upper, middle, lower = [], [], []
         for i in range(len(closes)):
             if i < period - 1:
                 upper.append(None)
@@ -174,113 +154,12 @@ class TechnicalService:
 
         return {"upper": upper, "middle": middle, "lower": lower}
 
-    def _analyze_ma_alignment(self, ma_data: dict, closes: list[float]) -> dict:
-        """分析均線排列"""
-        if not closes or len(closes) < 26:
-            return {"alignment": "unknown", "details": {}}
-
-        latest = len(closes) - 1
-        ma5 = ma_data.get("MA5", [None])[-1]
-        ma10 = ma_data.get("MA10", [None])[-1]
-        ma20 = ma_data.get("MA20", [None])[-1]
-        ma60 = ma_data.get("MA60", [None])[-1]
-
-        valid_mas = [m for m in [ma5, ma10, ma20, ma60] if m is not None]
-
-        if len(valid_mas) < 3:
-            return {"alignment": "insufficient_data", "details": {}}
-
-        # 多頭排列: MA5 > MA10 > MA20 > MA60
-        if ma5 and ma10 and ma20 and ma60:
-            if ma5 > ma10 > ma20 > ma60:
-                alignment = "bullish"
-            elif ma5 < ma10 < ma20 < ma60:
-                alignment = "bearish"
-            else:
-                alignment = "mixed"
-        else:
-            alignment = "mixed"
-
-        return {
-            "alignment": alignment,
-            "details": {
-                "MA5": round(ma5, 2) if ma5 else None,
-                "MA10": round(ma10, 2) if ma10 else None,
-                "MA20": round(ma20, 2) if ma20 else None,
-                "MA60": round(ma60, 2) if ma60 else None,
-            },
-        }
-
-    def _analyze_trend(self, closes: list[float], ma_data: dict) -> dict:
-        """趨勢分析"""
-        if len(closes) < 20:
-            return {"direction": "unknown", "strength": 0}
-
-        ma20 = ma_data.get("MA20", [None])[-1]
-        current = closes[-1]
-
-        if ma20 is None:
-            return {"direction": "unknown", "strength": 0}
-
-        # 價格相對於 MA20 的位置
-        deviation = (current - ma20) / ma20 * 100
-
-        if deviation > 5:
-            direction = "strong_up"
-            strength = min(int(deviation), 100)
-        elif deviation > 0:
-            direction = "up"
-            strength = int(deviation * 10)
-        elif deviation > -5:
-            direction = "down"
-            strength = int(abs(deviation) * 10)
-        else:
-            direction = "strong_down"
-            strength = min(int(abs(deviation)), 100)
-
-        return {"direction": direction, "strength": strength}
-
-    def _analyze_volume(self, bars: list[dict]) -> dict:
-        """量能分析"""
-        if len(bars) < 20:
-            return {"trend": "unknown", "ratio": 0}
-
-        volumes = [b["volume"] for b in bars]
-        recent_avg = np.mean(volumes[-5:])
-        period_avg = np.mean(volumes[-20:])
-
-        if period_avg == 0:
-            return {"trend": "unknown", "ratio": 0}
-
-        ratio = recent_avg / period_avg
-
-        if ratio > 1.5:
-            trend = "increasing"
-        elif ratio > 1.0:
-            trend = "slightly_increasing"
-        elif ratio > 0.5:
-            trend = "slightly_decreasing"
-        else:
-            trend = "decreasing"
-
-        return {"trend": trend, "ratio": round(ratio, 2)}
-
-    async def analyze(
-        self, stock_code: str, period: str = "medium"
-    ) -> dict:
+    async def analyze(self, stock_code: str, period: str = "medium") -> dict:
         """
-        執行完整技術分析
-
-        Args:
-            stock_code: 股票代碼
-            period: 分析週期 (short=20天, medium=60天, long=120天)
-
-        Returns:
-            技術分析結果
+        執行完整技術分析，回傳結構與前端 TechnicalAnalysis 型別一致
         """
         days_map = {"short": 60, "medium": 120, "long": 240}
         days = days_map.get(period, 120)
-
         bars = await self._fetch_bars(stock_code, days)
 
         if not bars or len(bars) < 20:
@@ -288,96 +167,158 @@ class TechnicalService:
                 "stock_code": stock_code,
                 "period": period,
                 "has_data": False,
+                "score": 0,
+                "signal": "中性",
+                "ma_alignment": "數據不足",
+                "trend": {"direction": "未知", "strength": 0.0},
+                "rsi": 50.0,
+                "macd": {"macd_line": 0.0, "signal_line": 0.0, "histogram": 0.0},
+                "kdj": {"k": 50.0, "d": 50.0, "j": 50.0},
+                "bollinger": {"upper": 0.0, "middle": 0.0, "lower": 0.0},
+                "volume": {"avg_volume": 0.0, "current_volume": 0.0, "ratio": 0.0},
                 "message": "數據不足，至少需要 20 根 K 線",
             }
 
         closes = [b["close"] for b in bars]
+        volumes = [b["volume"] for b in bars]
 
-        # 計算所有指標
         ma_data = self._calculate_ma(closes, [5, 10, 20, 60])
         rsi_values = self._calculate_rsi(closes)
         macd_data = self._calculate_macd(closes)
         kdj_data = self._calculate_kdj(bars)
         boll_data = self._calculate_bollinger(closes)
 
-        # 分析
-        ma_alignment = self._analyze_ma_alignment(ma_data, closes)
-        trend = self._analyze_trend(closes, ma_data)
-        volume = self._analyze_volume(bars)
-
         # 最新指標值
-        latest_rsi = rsi_values[-1] if rsi_values and rsi_values[-1] else None
-        latest_macd = macd_data["macd"][-1] if macd_data["macd"] else None
-        latest_signal = macd_data["signal"][-1] if macd_data["signal"] else None
-        latest_hist = macd_data["histogram"][-1] if macd_data["histogram"] else None
-        latest_k = kdj_data["k"][-1] if kdj_data["k"] else None
-        latest_d = kdj_data["d"][-1] if kdj_data["d"] else None
-        latest_j = kdj_data["j"][-1] if kdj_data["j"] else None
+        latest_rsi = next((v for v in reversed(rsi_values) if v is not None), 50.0)
+        latest_macd = macd_data["macd"][-1] if macd_data["macd"] else 0.0
+        latest_signal = macd_data["signal"][-1] if macd_data["signal"] else 0.0
+        latest_hist = macd_data["histogram"][-1] if macd_data["histogram"] else 0.0
+        latest_k = kdj_data["k"][-1] if kdj_data["k"] else 50.0
+        latest_d = kdj_data["d"][-1] if kdj_data["d"] else 50.0
+        latest_j = kdj_data["j"][-1] if kdj_data["j"] else 50.0
 
-        # 評分 (0-100)
-        score = 50  # 基準分
+        boll_upper = next((v for v in reversed(boll_data["upper"]) if v is not None), 0.0)
+        boll_middle = next((v for v in reversed(boll_data["middle"]) if v is not None), 0.0)
+        boll_lower = next((v for v in reversed(boll_data["lower"]) if v is not None), 0.0)
 
-        # MA 排列加分
-        if ma_alignment["alignment"] == "bullish":
+        # 均線排列
+        ma5 = (ma_data.get("MA5") or [None])[-1]
+        ma10 = (ma_data.get("MA10") or [None])[-1]
+        ma20 = (ma_data.get("MA20") or [None])[-1]
+        ma60 = (ma_data.get("MA60") or [None])[-1]
+        if ma5 and ma10 and ma20 and ma60:
+            if ma5 > ma10 > ma20 > ma60:
+                ma_alignment_str = "多頭排列"
+            elif ma5 < ma10 < ma20 < ma60:
+                ma_alignment_str = "空頭排列"
+            else:
+                ma_alignment_str = "盤整"
+        else:
+            ma_alignment_str = "數據不足"
+
+        # 趨勢
+        current_price = closes[-1]
+        if ma20:
+            deviation = (current_price - ma20) / ma20 * 100
+            if deviation > 5:
+                trend_direction = "強勢上升"
+                trend_strength = min(deviation / 20, 1.0)
+            elif deviation > 0:
+                trend_direction = "上升"
+                trend_strength = deviation / 20
+            elif deviation > -5:
+                trend_direction = "下降"
+                trend_strength = abs(deviation) / 20
+            else:
+                trend_direction = "強勢下降"
+                trend_strength = min(abs(deviation) / 20, 1.0)
+        else:
+            trend_direction = "未知"
+            trend_strength = 0.0
+
+        # 量能
+        avg_vol = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
+        current_vol = float(volumes[-1]) if volumes else 0.0
+        vol_ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else 0.0
+
+        # 評分
+        score = 50
+        if ma_alignment_str == "多頭排列":
             score += 20
-        elif ma_alignment["alignment"] == "bearish":
+        elif ma_alignment_str == "空頭排列":
             score -= 20
 
-        # 趨勢加分
-        if trend["direction"] in ("up", "strong_up"):
-            score += min(trend["strength"] // 5, 15)
-        elif trend["direction"] in ("down", "strong_down"):
-            score -= min(trend["strength"] // 5, 15)
+        if "上升" in trend_direction:
+            score += int(trend_strength * 15)
+        elif "下降" in trend_direction:
+            score -= int(trend_strength * 15)
 
-        # RSI 加分
-        if latest_rsi:
-            if 40 < latest_rsi < 60:
-                score += 5  # 中性區
-            elif latest_rsi < 30:
-                score += 10  # 超賣反彈機會
-            elif latest_rsi > 70:
-                score -= 10  # 超買風險
-
-        # MACD 加分
-        if latest_hist and latest_hist > 0:
+        if 40 < latest_rsi < 60:
+            score += 5
+        elif latest_rsi < 30:
             score += 10
-        elif latest_hist and latest_hist < 0:
+        elif latest_rsi > 70:
             score -= 10
 
-        # 量能加分
-        if volume["trend"] == "increasing":
+        if latest_hist > 0:
             score += 10
-        elif volume["trend"] == "decreasing":
-            score -= 5
+        elif latest_hist < 0:
+            score -= 10
+
+        if vol_ratio > 1.5:
+            score += 5
 
         score = max(0, min(100, score))
+
+        # 訊號
+        if score >= 80:
+            signal = "強力看多"
+        elif score >= 65:
+            signal = "看多"
+        elif score >= 50:
+            signal = "中性偏多"
+        elif score >= 35:
+            signal = "中性偏空"
+        elif score >= 20:
+            signal = "看空"
+        else:
+            signal = "強力看空"
 
         return {
             "stock_code": stock_code,
             "period": period,
             "has_data": True,
             "score": score,
-            "ma_alignment": ma_alignment,
-            "trend": trend,
-            "volume": volume,
-            "indicators": {
-                "rsi": round(latest_rsi, 2) if latest_rsi else None,
-                "macd": round(latest_macd, 4) if latest_macd else None,
-                "macd_signal": round(latest_signal, 4) if latest_signal else None,
-                "macd_histogram": round(latest_hist, 4) if latest_hist else None,
-                "kdj_k": round(latest_k, 2) if latest_k else None,
-                "kdj_d": round(latest_d, 2) if latest_d else None,
-                "kdj_j": round(latest_j, 2) if latest_j else None,
+            "signal": signal,
+            "ma_alignment": ma_alignment_str,
+            "trend": {
+                "direction": trend_direction,
+                "strength": round(trend_strength, 3),
+            },
+            "rsi": round(latest_rsi, 2),
+            "macd": {
+                "macd_line": round(latest_macd, 4),
+                "signal_line": round(latest_signal, 4),
+                "histogram": round(latest_hist, 4),
+            },
+            "kdj": {
+                "k": round(latest_k, 2),
+                "d": round(latest_d, 2),
+                "j": round(latest_j, 2),
             },
             "bollinger": {
-                "upper": round(boll_data["upper"][-1], 2) if boll_data["upper"][-1] else None,
-                "middle": round(boll_data["middle"][-1], 2) if boll_data["middle"][-1] else None,
-                "lower": round(boll_data["lower"][-1], 2) if boll_data["lower"][-1] else None,
+                "upper": round(boll_upper, 2),
+                "middle": round(boll_middle, 2),
+                "lower": round(boll_lower, 2),
+            },
+            "volume": {
+                "avg_volume": round(avg_vol, 0),
+                "current_volume": round(current_vol, 0),
+                "ratio": vol_ratio,
             },
             "bars_count": len(bars),
         }
 
 
 def create_technical_service(db: AsyncSession) -> TechnicalService:
-    """建立技術分析服務實例"""
     return TechnicalService(db)

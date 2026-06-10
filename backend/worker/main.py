@@ -9,7 +9,7 @@ import sys
 
 from app.config import settings
 from app.database import init_db, close_db
-from backend.worker import scheduler
+from worker import scheduler
 
 # 設定日誌
 logging.basicConfig(

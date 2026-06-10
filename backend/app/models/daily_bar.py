@@ -3,7 +3,7 @@ K 線數據模型 (TimescaleDB Hypertable)
 """
 from datetime import date
 
-from sqlalchemy import Column, Integer, Numeric, Date, ForeignKey, String
+from sqlalchemy import Column, Integer, Numeric, Date, DateTime, ForeignKey, String
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -48,7 +48,7 @@ class MinuteBar(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     stock_code = Column(String(10), ForeignKey("stocks.code"), nullable=False, index=True)
-    bar_time = Column(Date, nullable=False, index=True)  # Actually DateTime for minute bars
+    bar_time = Column(DateTime(timezone=True), nullable=False, index=True)
     interval_minutes = Column(Integer, nullable=False, default=1)  # 1, 3, 5, 15, 30
     open_price = Column(Numeric(12, 2))
     high_price = Column(Numeric(12, 2))

@@ -26,10 +26,10 @@ def register_jobs():
     - 籌碼數據: 每個交易日 18:30
     - 情緒分析: 每 2 小時
     """
-    from backend.worker.twse_worker import fetch_all_stocks_daily
-    from backend.worker.yahoo_worker import fetch_adr_data, fetch_index_data
-    from backend.worker.crawler_worker import fetch_news
-    from backend.worker.sentiment_worker import analyze_all_holdings
+    from worker.twse_worker import fetch_all_stocks_daily
+    from worker.yahoo_worker import fetch_adr_data, fetch_index_data
+    from worker.crawler_worker import fetch_news
+    from worker.sentiment_worker import analyze_all_holdings
 
     # TWSE 日數據抓取 - 週一至週五 18:00
     scheduler.add_job(
