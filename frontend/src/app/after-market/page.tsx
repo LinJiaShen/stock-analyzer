@@ -1,3 +1,5 @@
+"use client";
+
 import { Calendar, TrendingUp, TrendingDown, Star } from "lucide-react";
 import WatchlistCard, { type WatchlistStock } from "@/components/war-room/WatchlistCard";
 
