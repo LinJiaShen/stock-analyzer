@@ -3,6 +3,7 @@
 - 多因子綜合評分
 - 雷達圖數據計算
 - 決策樹訊號產生
+- K 線形態因子整合
 """
 
 from typing import Optional
@@ -17,17 +18,19 @@ from app.services.technical import TechnicalService
 from app.services.chip import ChipService
 from app.services.sentiment import SentimentService
 from app.services.industry import IndustryService
+from app.services.pattern import PatternService
 
 
 class ScoringService:
     """決策評分服務"""
 
-    # 各維度權重
+    # 各維度權重（總和 = 1.0）
     WEIGHTS = {
-        "technical": 0.30,
-        "chip": 0.30,
+        "technical": 0.25,
+        "chip": 0.25,
         "fundamental": 0.20,
         "sentiment": 0.20,
+        "pattern": 0.10,
     }
 
     def __init__(self, db: AsyncSession):
@@ -36,11 +39,13 @@ class ScoringService:
         self.chip_service = ChipService(db)
         self.sentiment_service = SentimentService(db)
         self.industry_service = IndustryService(db)
+        self.pattern_service = PatternService()
 
     async def calculate_composite_score(self, stock_code: str) -> dict:
         """
         多因子綜合評分
         回傳 0-100 的綜合戰鬥力分數
+        包含: 技術面、籌碼面、基本面、情緒面、K線形態
         """
         # 並行取得各維度分析
         technical = await self.tech_service.analyze(stock_code, "medium")
@@ -48,17 +53,31 @@ class ScoringService:
         sentiment = await self.sentiment_service.analyze(stock_code, 7)
         industry = await self.industry_service.analyze(stock_code, 30)
 
+        # K 線形態分析
+        bars = await self.tech_service._fetch_bars(stock_code, days=120)
+        patterns = self.pattern_service.detect_all(bars)
+        pattern_score = self.pattern_service.get_pattern_score(patterns)
+        # 將 -100~100 轉換為 0~100
+        pattern_norm = (pattern_score + 100) / 2
+
+        # 只保留最近 10 根 K 線內的形態（用於前端顯示）
+        max_idx = len(bars) - 1 if bars else 0
+        recent_patterns = self.pattern_service.get_recent_patterns(
+            patterns, max_idx, lookback=10
+        )
+
         tech_score = technical.get("score", 50)
         chip_score = chip.get("score", 50)
         sentiment_score = sentiment.get("score", 50)
         fundamental_score = industry.get("score", 50)
 
-        # 加權計算
+        # 加權計算（包含 K 線形態）
         total_score = (
             tech_score * self.WEIGHTS["technical"]
             + chip_score * self.WEIGHTS["chip"]
             + fundamental_score * self.WEIGHTS["fundamental"]
             + sentiment_score * self.WEIGHTS["sentiment"]
+            + pattern_norm * self.WEIGHTS["pattern"]
         )
         total_score = round(total_score, 1)
 
@@ -81,6 +100,9 @@ class ScoringService:
             "chip_score": chip_score,
             "fundamental_score": fundamental_score,
             "sentiment_score": sentiment_score,
+            "pattern_score": round(pattern_score, 1),
+            "pattern_norm": round(pattern_norm, 1),
+            "recent_patterns": recent_patterns,
             "health_level": health_level,
             "weights": self.WEIGHTS,
             "analyzed_at": datetime.now().isoformat(),

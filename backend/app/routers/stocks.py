@@ -186,6 +186,7 @@ async def get_kline_data(
     start_date: Optional[date] = Query(None, description="開始日期"),
     end_date: Optional[date] = Query(None, description="結束日期"),
     adjusted: bool = Query(True, description="是否使用還原權值"),
+    limit: Optional[int] = Query(None, description="回傳筆數上限 (預設回傳全部)"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -195,8 +196,9 @@ async def get_kline_data(
     - **start_date**: 開始日期
     - **end_date**: 結束日期
     - **adjusted**: 是否使用還原權值 (預設 True)
+    - **limit**: 回傳筆數上限 (預設回傳全部)
 
-    優先從本地 TimescaleDB 查詢，若無數據則從 Yahoo Finance 抓取
+    優先從本地 TimescaleDB 查詢，若無數據則從 Yahoo Finance 抓取並自動儲存
     """
     if not start_date:
         start_date = date.today() - timedelta(days=365)
@@ -238,11 +240,12 @@ async def get_kline_data(
                 data=data,
             )
 
-    # 本地無數據或分 K 線 -> 從 Yahoo Finance 抓取
+    # 從 Yahoo Finance 抓取 (日 K 線本地無數據 或 分 K 線)
     yahoo_symbol = f"{stock_code}.TW"
     yahoo_interval = {
-        "1m": "1m", "5m": "5m", "15m": "15m",
-        "1h": "60m", "1d": "1d",
+        "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+        "60m": "60m", "1h": "60m",
+        "1d": "1d", "1w": "1wk", "1mo": "1mo",
     }.get(interval, "1d")
 
     chart_data = await yahoo_worker.fetch_chart_data(
@@ -263,11 +266,15 @@ async def get_kline_data(
     quote = indicators.get("quote", [{}])[0]
     adjclose_list = indicators.get("adjclose", [{}])[0].get("adjclose", [])
 
-    data = []
+    # Yahoo 間隔 -> 分鐘數 (用於分K儲存)
+    interval_to_minutes = {
+        "1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60,
+    }
+
+    # 解析所有 Yahoo 數據
+    all_points: list[KLinePoint] = []
     for i, ts in enumerate(timestamps):
-        dt = datetime.fromtimestamp(ts).date()
-        if dt < start_date or dt > end_date:
-            continue
+        dt = datetime.fromtimestamp(ts)
 
         open_val = quote.get("open", [None])[i] if "open" in quote else None
         high_val = quote.get("high", [None])[i] if "high" in quote else None
@@ -281,8 +288,11 @@ async def get_kline_data(
         else:
             final_close = close_val
 
-        data.append(KLinePoint(
-            date=dt,
+        # 分 K 線使用完整 datetime，日 K 線使用 date
+        point_date = dt if interval != "1d" else dt.date()
+
+        all_points.append(KLinePoint(
+            date=point_date,
             open=open_val,
             high=high_val,
             low=low_val,
@@ -291,11 +301,63 @@ async def get_kline_data(
             volume=volume_val,
         ))
 
+    # 日 K 線：自動儲存到 DailyBar (避免重複從 Yahoo 抓取)
+    if interval == "1d" and all_points:
+        kline_records = [
+            {
+                "date": p.date,
+                "open": p.open,
+                "high": p.high,
+                "low": p.low,
+                "close": p.close,
+                "adjclose": p.adj_close,
+                "volume": p.volume,
+            }
+            for p in all_points
+        ]
+        try:
+            saved = await yahoo_worker.save_kline_data(stock_code, kline_records)
+        except Exception:
+            # 儲存失敗不影響回傳
+            pass
+
+    # 分 K 線：自動儲存到 MinuteBar
+    if interval != "1d" and interval_to_minutes.get(interval) and all_points:
+        minutes = interval_to_minutes[interval]
+        kline_records = [
+            {
+                "datetime": p.date,
+                "open": p.open,
+                "high": p.high,
+                "low": p.low,
+                "close": p.close,
+                "volume": p.volume,
+            }
+            for p in all_points
+        ]
+        try:
+            saved = await yahoo_worker.save_minute_kline_data(stock_code, minutes, kline_records)
+        except Exception:
+            # 儲存失敗不影響回傳
+            pass
+
+    # 根據 start_date / end_date 過濾
+    filtered = []
+    for p in all_points:
+        p_date = p.date.date() if isinstance(p.date, datetime) else p.date
+        if p_date < start_date or p_date > end_date:
+            continue
+        filtered.append(p)
+
+    # 根據 limit 截斷
+    if limit is not None and limit > 0:
+        filtered = filtered[-limit:]
+
     return KLineResponse(
         stock_code=stock_code,
         interval=interval,
         adjusted=adjusted,
-        data=data,
+        data=filtered,
     )
 
 
