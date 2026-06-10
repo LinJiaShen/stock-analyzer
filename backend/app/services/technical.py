@@ -21,8 +21,8 @@ class TechnicalService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def _fetch_bars(self, stock_code: str, days: int = 120) -> list[dict]:
-        """取得 K 線數據"""
+    async def _fetch_bars(self, stock_code: str, days: int = 1095) -> list[dict]:
+        """取得日K線數據"""
         start_date = date.today() - timedelta(days=days)
         query = (
             select(DailyBar)
@@ -41,11 +41,40 @@ class TechnicalService:
                 "open": float(bar.open_price) if bar.open_price else 0,
                 "high": float(bar.high_price) if bar.high_price else 0,
                 "low": float(bar.low_price) if bar.low_price else 0,
-                "close": float(bar.close_price) if bar.close_price else 0,
+                "close": float(bar.adjusted_close or bar.close_price) if (bar.adjusted_close or bar.close_price) else 0,
                 "volume": float(bar.volume) if bar.volume else 0,
             }
             for bar in bars
         ]
+
+    def _aggregate_bars(self, daily_bars: list[dict], interval: str) -> list[dict]:
+        """將日K聚合為週K或月K"""
+        if interval == "1d" or not daily_bars:
+            return daily_bars
+
+        from itertools import groupby
+
+        def key_fn(bar):
+            d = bar["date"]
+            if interval == "1w":
+                iso = d.isocalendar()
+                return (iso[0], iso[1])  # (year, isoweek)
+            return (d.year, d.month)
+
+        aggregated = []
+        sorted_bars = sorted(daily_bars, key=lambda b: b["date"])
+        for _, group in groupby(sorted_bars, key=key_fn):
+            bars = list(group)
+            aggregated.append({
+                "date": bars[-1]["date"],
+                "open": bars[0]["open"],
+                "high": max(b["high"] for b in bars),
+                "low": min(b["low"] for b in bars),
+                "close": bars[-1]["close"],
+                "volume": sum(b["volume"] for b in bars),
+            })
+
+        return aggregated
 
     def _calculate_ma(self, closes: list[float], periods: list[int]) -> dict:
         """計算多週期移動平均線"""
@@ -266,22 +295,27 @@ class TechnicalService:
         return {"trend": trend, "ratio": round(ratio, 2)}
 
     async def analyze(
-        self, stock_code: str, period: str = "medium"
+        self, stock_code: str, period: str = "medium", interval: str = "1d"
     ) -> dict:
         """
         執行完整技術分析
 
         Args:
             stock_code: 股票代碼
-            period: 分析週期 (short=20天, medium=60天, long=120天)
+            period: 分析週期 (short / medium / long)
+            interval: K線週期 (1d / 1w / 1mo)
 
         Returns:
             技術分析結果
         """
-        days_map = {"short": 60, "medium": 120, "long": 240}
-        days = days_map.get(period, 120)
+        # 週K/月K需要更多日K資料才能聚合出足夠根數
+        days_map = {"short": 480, "medium": 730, "long": 1095}
+        base_days = days_map.get(period, 730)
+        interval_multiplier = {"1d": 1, "1w": 5, "1mo": 22}
+        days = base_days * interval_multiplier.get(interval, 1)
 
-        bars = await self._fetch_bars(stock_code, days)
+        daily_bars = await self._fetch_bars(stock_code, days)
+        bars = self._aggregate_bars(daily_bars, interval)
 
         if not bars or len(bars) < 20:
             return {
@@ -352,27 +386,75 @@ class TechnicalService:
 
         score = max(0, min(100, score))
 
+        # 訊號（中文）
+        if score >= 80:
+            signal = "強力看多"
+        elif score >= 65:
+            signal = "看多"
+        elif score >= 50:
+            signal = "中性偏多"
+        elif score >= 35:
+            signal = "中性偏空"
+        elif score >= 20:
+            signal = "看空"
+        else:
+            signal = "強力看空"
+
+        # 均線排列（中文字串）
+        alignment_map = {"bullish": "多頭排列", "bearish": "空頭排列", "mixed": "盤整", "unknown": "數據不足", "insufficient_data": "數據不足"}
+        ma_alignment_str = alignment_map.get(ma_alignment.get("alignment", "unknown"), "盤整")
+
+        # 趨勢（中文字串 + 0~1 強度）
+        direction_map = {"strong_up": "強勢上升", "up": "上升", "down": "下降", "strong_down": "強勢下降", "unknown": "未知"}
+        trend_direction = direction_map.get(trend.get("direction", "unknown"), "未知")
+        trend_strength = round(min(trend.get("strength", 0) / 100, 1.0), 3)
+
+        # 量能
+        volumes = [b["volume"] for b in bars]
+        avg_vol = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes)) if volumes else 0.0
+        current_vol = float(volumes[-1]) if volumes else 0.0
+        vol_ratio = round(current_vol / avg_vol, 2) if avg_vol > 0 else 0.0
+
+        # 安全取最後一個非 None 的 Bollinger 值
+        boll_upper = next((v for v in reversed(boll_data["upper"]) if v is not None), 0.0)
+        boll_middle = next((v for v in reversed(boll_data["middle"]) if v is not None), 0.0)
+        boll_lower = next((v for v in reversed(boll_data["lower"]) if v is not None), 0.0)
+
+        interval_label = {"1d": "日線", "1w": "週線", "1mo": "月線"}.get(interval, interval)
+
         return {
             "stock_code": stock_code,
             "period": period,
+            "interval": interval,
+            "interval_label": interval_label,
             "has_data": True,
             "score": score,
-            "ma_alignment": ma_alignment,
-            "trend": trend,
-            "volume": volume,
-            "indicators": {
-                "rsi": round(latest_rsi, 2) if latest_rsi else None,
-                "macd": round(latest_macd, 4) if latest_macd else None,
-                "macd_signal": round(latest_signal, 4) if latest_signal else None,
-                "macd_histogram": round(latest_hist, 4) if latest_hist else None,
-                "kdj_k": round(latest_k, 2) if latest_k else None,
-                "kdj_d": round(latest_d, 2) if latest_d else None,
-                "kdj_j": round(latest_j, 2) if latest_j else None,
+            "signal": signal,
+            "ma_alignment": ma_alignment_str,
+            "trend": {
+                "direction": trend_direction,
+                "strength": trend_strength,
+            },
+            "rsi": round(latest_rsi, 2) if latest_rsi else 50.0,
+            "macd": {
+                "macd_line": round(latest_macd, 4) if latest_macd else 0.0,
+                "signal_line": round(latest_signal, 4) if latest_signal else 0.0,
+                "histogram": round(latest_hist, 4) if latest_hist else 0.0,
+            },
+            "kdj": {
+                "k": round(latest_k, 2) if latest_k else 50.0,
+                "d": round(latest_d, 2) if latest_d else 50.0,
+                "j": round(latest_j, 2) if latest_j else 50.0,
             },
             "bollinger": {
-                "upper": round(boll_data["upper"][-1], 2) if boll_data["upper"][-1] else None,
-                "middle": round(boll_data["middle"][-1], 2) if boll_data["middle"][-1] else None,
-                "lower": round(boll_data["lower"][-1], 2) if boll_data["lower"][-1] else None,
+                "upper": round(boll_upper, 2),
+                "middle": round(boll_middle, 2),
+                "lower": round(boll_lower, 2),
+            },
+            "volume": {
+                "avg_volume": round(avg_vol, 0),
+                "current_volume": round(current_vol, 0),
+                "ratio": vol_ratio,
             },
             "bars_count": len(bars),
         }

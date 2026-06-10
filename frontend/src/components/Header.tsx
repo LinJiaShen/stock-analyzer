@@ -92,7 +92,7 @@ export default function Header() {
           </Link>
 
           {/* Navigation */}
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active = isActive(item.href);
@@ -108,7 +108,7 @@ export default function Header() {
                       }`}
                     >
                       <Icon className="w-4 h-4" />
-                      <span className="hidden sm:inline">{item.name}</span>
+                      <span className="hidden lg:inline">{item.name}</span>
                       <ChevronDown className="w-3 h-3 ml-0.5" />
                     </button>
                     {/* Dropdown */}
@@ -149,7 +149,7 @@ export default function Header() {
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  <span className="hidden sm:inline">{item.name}</span>
+                  <span className="hidden lg:inline">{item.name}</span>
                 </Link>
               );
             })}

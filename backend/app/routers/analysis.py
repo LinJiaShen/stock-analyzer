@@ -24,16 +24,18 @@ router = APIRouter(prefix="/api/analysis", tags=["深度分析"])
 async def get_technical_analysis(
     stock_code: str,
     period: str = Query("medium", description="分析週期: short, medium, long"),
+    interval: str = Query("1d", description="K線週期: 1d, 1w, 1mo"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     技術分析結果
 
     包含 K 線形態、均線排列、RSI、MACD、KDJ、布林帶等指標
+    - **interval**: 1d 日線 / 1w 週線 / 1mo 月線
     """
     service = TechnicalService(db)
     try:
-        result = await service.analyze(stock_code, period)
+        result = await service.analyze(stock_code, period, interval)
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
