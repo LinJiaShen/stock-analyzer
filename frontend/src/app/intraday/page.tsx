@@ -1,3 +1,5 @@
+"use client";
+
 import { Clock, TrendingUp, TrendingDown, AlertTriangle, BarChart3 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -145,8 +147,8 @@ export default function IntradayPage() {
         </div>
 
         {/* 即時 K 線圖 */}
-        <div className="h-48">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="h-48 min-w-0">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart data={klineData}>
               <defs>
                 <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
