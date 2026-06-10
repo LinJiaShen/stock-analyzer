@@ -4,11 +4,16 @@
 
 ## 技術架構
 
-- **前端**: Next.js 14 + ECharts + Zustand
-- **後端**: Python FastAPI (asyncpg)
-- **資料庫**: PostgreSQL + TimescaleDB + Redis
-- **AI**: Ollama (qwen/gemma)
-- **部署**: Docker Compose
+| 層級 | 技術 | 說明 |
+|------|------|------|
+| **前端框架** | Next.js 16+ (App Router + Turbopack) | React 生態系，SSR/SSG 支援 |
+| **前端圖表** | Recharts | K線圖、雷達圖、量價分析 |
+| **狀態管理** | @tanstack/react-query | 伺服器狀態管理 + 快取 |
+| **後端框架** | Python FastAPI (asyncpg) | 高效能 async API |
+| **資料庫** | PostgreSQL + TimescaleDB | 時間序列資料庫 |
+| **快取** | Redis | 快取 + 速率限制 |
+| **AI** | Ollama (qwen/gemma) | 本地 LLM 情緒分析 |
+| **部署** | Docker Compose | 容器化開發與部署 |
 
 ## 快速開始
 
@@ -52,33 +57,47 @@ npm run dev
 
 啟動後訪問 `http://localhost:8000/docs` 查看 Swagger UI。
 
+### API 模組
+
+| 模組 | 路徑 | 說明 |
+|------|------|------|
+| 認證 | `/api/auth/*` | 註冊、登入、使用者資訊 |
+| 股票 | `/api/stocks/*` | 股票搜尋、K線、籌碼、盤前 |
+| 分析 | `/api/analysis/*` | 技術分析、籌碼分析、情緒分析、產業鏈 |
+| 決策 | `/api/decision/*` | 多因子評分、雷達圖、決策樹訊號 |
+| 持倉 | `/api/holdings/*` | 持倉管理、診斷 |
+| 管理 | `/api/admin/*` | 股票同步、歷史數據初始化 |
+
 ## 專案結構
 
 ```
 stock-analyzer/
 ├── backend/              # FastAPI 後端
 │   ├── app/
-│   │   ├── models/       # SQLAlchemy ORM
+│   │   ├── models/       # SQLAlchemy ORM (user, stock, daily_bar, holding, analysis, trade_log)
 │   │   ├── schemas/      # Pydantic 驗證
-│   │   ├── routers/      # API 路由
-│   │   ├── services/     # 業務邏輯
-│   │   └── utils/        # 工具函式
-│   ├── worker/           # 獨立數據 Worker
+│   │   ├── routers/      # API 路由 (auth, stocks, analysis, decision, holdings, admin)
+│   │   ├── services/     # 業務邏輯 (technical, chip, sentiment, industry, scoring)
+│   │   └── utils/        # 工具函式 (cache, security)
+│   ├── worker/           # 獨立數據 Worker (twse, yahoo, crawler, sentiment, stock_list)
 │   └── tests/
-├── frontend/             # Next.js 前端
+├── frontend/             # Next.js 16+ 前端
 ├── docker-compose.yml
 └── plans/                # 架構規劃
 ```
 
 ## 開發階段
 
-1. ✅ 基礎架構 (MVP) - 進行中
-2. 獨立 Worker 服務
-3. 數據整合與 API 完善
-4. 分析引擎
-5. AI 整合
-6. 前端完善
-7. 優化與部署
+1. ✅ 後端基礎架構 (Models, Schemas, Routers, Auth)
+2. ✅ 獨立數據 Worker 服務 (TWSE, Yahoo Finance, 新聞爬蟲, 情緒分析)
+3. ✅ 股票數據 API 實作 (搜尋, K-line, 籌碼, 盤前)
+4. ✅ 股票代碼管理 + 歷史數據批量初始化
+5. ✅ 深度分析引擎 (技術分析, 籌碼分析, 產業鏈, LLM 情緒)
+6. ✅ 決策工具模組 (多因子評分, 雷達圖, 決策樹訊號)
+7. ✅ 前端 Next.js 專案初始化
+8. 🚧 時間軸戰情室 UI
+9. ⏳ 個人化決策中心 UI
+10. ⏳ 系統整合測試
 
 ## 授權
 
