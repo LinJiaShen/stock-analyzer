@@ -265,7 +265,7 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
   return (
     <div ref={containerRef} className="w-full select-none">
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-2 px-1">
+      <div className="flex items-center justify-between mb-1 px-1">
         <div className="flex items-center gap-1">
           <button
             onClick={() => applyZoom(-1, 0.5)}
@@ -309,6 +309,19 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
         </span>
       </div>
 
+      {/* MA Legend (HTML, not SVG overlay) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 mb-2">
+        {(["MA5", "MA10", "MA20", "MA60", "MA120"] as const).map((label, i) => {
+          const colors = ["#f59e0b", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
+          return (
+            <span key={label} className="flex items-center gap-1 text-xs text-gray-500">
+              <span className="inline-block w-5 h-0.5 rounded" style={{ backgroundColor: colors[i] }} />
+              {label}
+            </span>
+          );
+        })}
+      </div>
+
       {/* Main chart */}
       <div className="overflow-hidden relative">
         <svg
@@ -346,17 +359,6 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
               />
             );
           })}
-
-          {/* MA Legend */}
-          <g transform={`translate(${PAD.left + 8}, ${CHART_TOP + 8})`}>
-            <rect x={-4} y={-12} width={160} height={86} rx={6} fill="white" fillOpacity={0.92} stroke="#e2e8f0" strokeWidth={0.5} />
-            {[["MA5", "#f59e0b"], ["MA10", "#3b82f6"], ["MA20", "#8b5cf6"], ["MA60", "#ec4899"], ["MA120", "#14b8a6"]].map(([label, color], i) => (
-              <g key={label} transform={`translate(0, ${i * 18})`}>
-                <line x1={0} y1={0} x2={14} y2={0} stroke={color} strokeWidth={2} />
-                <text x={18} y={4} fontSize={11} fill="#64748b" fontWeight="500">{label}</text>
-              </g>
-            ))}
-          </g>
 
           {/* Candlesticks */}
           {visibleWithMA.map((d, i) => {
