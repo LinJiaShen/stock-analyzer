@@ -161,7 +161,7 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
 
   // ── Zoom helpers ──
   const applyZoom = useCallback((delta: number, pivotRatio: number) => {
-    const change = Math.max(2, Math.round(visibleCount * 0.12));
+    const change = Math.max(1, Math.round(visibleCount * 0.05));
     const leftChange = Math.round(change * pivotRatio);
     const rightChange = change - leftChange;
     let newStart = viewStart + delta * leftChange;
@@ -304,7 +304,7 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
             </button>
           ))}
         </div>
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-gray-400 hidden sm:block">
           {visibleCount} 根 K 線（滾輪縮放・拖拽平移）
         </span>
       </div>

@@ -4,6 +4,7 @@ import { Search, TrendingUp, Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState, useMemo, useEffect } from "react";
 import {
+  ComposedChart,
   LineChart,
   Line,
   XAxis,
@@ -401,7 +402,7 @@ export default function TechnicalPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* 頁頭 */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
             <TrendingUp className="w-5 h-5 text-blue-600" />
@@ -505,10 +506,10 @@ export default function TechnicalPage() {
 
       {/* K 線圖 + MA + 技術標註 */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <h3 className="text-base font-semibold text-gray-900">K 線圖 + 移動平均線 + 技術標註 ({klineData.length} 根 K 線)</h3>
-            {/* 日/週/月 切換 */}
+        <div className="flex flex-wrap items-center justify-between gap-y-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-gray-900">K 線圖 · MA · 技術標註</h3>
+            <span className="text-xs text-gray-400">({klineData.length} 根 K 線)</span>
             <div className="flex bg-gray-100 rounded-lg p-0.5">
               {INTERVALS.map((iv) => (
                 <button
@@ -610,7 +611,7 @@ export default function TechnicalPage() {
         <h3 className="text-base font-semibold text-gray-900 mb-4">MACD (指數平滑異同移動平均線)</h3>
         <div className="h-48 min-w-0">
           <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <LineChart data={macdData}>
+            <ComposedChart data={macdData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
               <YAxis stroke="#94a3b8" fontSize={11} />
@@ -626,7 +627,7 @@ export default function TechnicalPage() {
               <Bar dataKey="histogram" fill="#3b82f6" name="MACD 柱狀圖" radius={[2, 2, 0, 0]} opacity={0.6} />
               <Line type="monotone" dataKey="macd" stroke="#1e293b" strokeWidth={1.5} dot={false} name="MACD" />
               <Line type="monotone" dataKey="signal" stroke="#ef4444" strokeWidth={1.5} dot={false} name="Signal" />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       </div>
