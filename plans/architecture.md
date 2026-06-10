@@ -158,7 +158,8 @@ stock-analyzer/
 │   │   │   ├── chip.py        # 籌碼分析 (法人動向, 融資融券, 集中度)
 │   │   │   ├── sentiment.py   # 情緒分析 (新聞情緒, 恐懼貪婪指數)
 │   │   │   ├── industry.py    # 產業鏈分析 (同業比較, 上下游, 輪動)
-│   │   │   └── scoring.py     # 多因子評分 (加權合成, 雷達圖, 決策樹)
+│   │   │   ├── scoring.py     # 多因子評分 (加權合成, 雷達圖, 決策樹)
+│   │   │   └── pattern.py     # K線形態辨識 (Marubozu, Hammer, Doji, Engulfing, Star, Island)
 │   │   ├── utils/           # 工具函式
 │   │   │   ├── __init__.py
 │   │   │   ├── security.py  # JWT, 密碼雜湊
@@ -182,24 +183,35 @@ stock-analyzer/
 │   │   ├── app/             # App Router
 │   │   │   ├── layout.tsx
 │   │   │   ├── page.tsx     # 首頁 (Hero + 功能卡片 + 快速搜尋)
-│   │   │   ├── login/       # 登入頁面 (待實作)
-│   │   │   ├── register/    # 註冊頁面 (待實作)
-│   │   │   ├── dashboard/   # 主儀表板 (待實作)
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── pre-market/    # 盤前戰情室 (待實作)
-│   │   │   │   ├── intraday/      # 盤中追蹤 (待實作)
-│   │   │   │   └── after-market/  # 盤後覆盤 (待實作)
-│   │   │   ├── holdings/    # 持股管理 (待實作)
-│   │   │   │   ├── page.tsx
-│   │   │   │   └── [id]/    # 個股詳情 (待實作)
-│   │   │   ├── analysis/    # 深度分析 (待實作)
-│   │   │   │   ├── page.tsx
-│   │   │   │   └── [id]/    # 個股分析 (待實作)
-│   │   │   └── journal/     # 交易日誌 (待實作)
-│   │   │       └── page.tsx
+│   │   │   ├── login/       # 登入頁面
+│   │   │   ├── register/    # 註冊頁面
+│   │   │   ├── pre-market/  # 盤前戰情室
+│   │   │   ├── intraday/    # 盤中追蹤
+│   │   │   ├── after-market/ # 盤後覆盤
+│   │   │   ├── stock/
+│   │   │   │   └── [code]/  # 個股整合頁面 (技術/籌碼/情緒/決策)
+│   │   │   ├── technical/   # 技術分析頁面
+│   │   │   ├── chip/        # 籌碼分析頁面
+│   │   │   ├── sentiment/   # 情緒分析頁面
+│   │   │   ├── decision/    # 決策評分頁面
+│   │   │   └── holdings/
+│   │   │       ├── page.tsx       # 持股管理
+│   │   │       └── analysis/      # 持股分析
 │   │   ├── components/      # 共用元件
 │   │   │   ├── Header.tsx         # 導航列 (戰情室/技術/籌碼/情緒/決策)
-│   │   │   └── QueryProvider.tsx  # React Query 提供者
+│   │   │   ├── QueryProvider.tsx  # React Query 提供者
+│   │   │   ├── technical/
+│   │   │   │   ├── CandlestickChart.tsx    # K線圖 (MA5/10/20/60/120 + 形態標註)
+│   │   │   │   └── KLineIntervalSelector.tsx # K線週期切換器
+│   │   │   ├── decision/
+│   │   │   │   ├── RadarChartComponent.tsx  # 雷達圖
+│   │   │   │   └── ScoreBreakdownCard.tsx   # 評分明細
+│   │   │   └── war-room/
+│   │   │       ├── ADRCards.tsx           # ADR 美股數據
+│   │   │       ├── InternationalIndexCard.tsx # 國際指數
+│   │   │       ├── NewsCard.tsx           # 新聞卡片
+│   │   │       ├── SentimentAlertCard.tsx # 情緒警報
+│   │   │       └── WatchlistCard.tsx      # 觀察清單
 │   │   ├── hooks/           # 自訂 Hooks
 │   │   │   └── useApi.ts    # API 請求 Hooks (React Query)
 │   │   ├── lib/             # 工具函式
