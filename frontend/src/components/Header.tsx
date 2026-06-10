@@ -1,15 +1,44 @@
 import Link from "next/link";
-import { LineChart, TrendingUp, BarChart3, Brain, Activity } from "lucide-react";
-
-const navItems = [
-  { name: "戰情室", href: "/", icon: LineChart },
-  { name: "技術分析", href: "/technical", icon: TrendingUp },
-  { name: "籌碼分析", href: "/chip", icon: BarChart3 },
-  { name: "情緒分析", href: "/sentiment", icon: Brain },
-  { name: "決策中心", href: "/decision", icon: Activity },
-];
+import { usePathname } from "next/navigation";
+import {
+  LineChart,
+  TrendingUp,
+  BarChart3,
+  Brain,
+  Activity,
+  ChevronDown,
+  Sun,
+  Monitor,
+  Moon,
+} from "lucide-react";
 
 export default function Header() {
+  const pathname = usePathname();
+
+  const navItems = [
+    {
+      name: "戰情室",
+      href: null as string | null,
+      icon: LineChart,
+      children: [
+        { name: "盤前戰情室", href: "/pre-market", icon: Sun },
+        { name: "盤中追蹤", href: "/intraday", icon: Monitor },
+        { name: "盤後覆盤", href: "/after-market", icon: Moon },
+      ],
+    },
+    { name: "技術分析", href: "/technical", icon: TrendingUp },
+    { name: "籌碼分析", href: "/chip", icon: BarChart3 },
+    { name: "情緒分析", href: "/sentiment", icon: Brain },
+    { name: "決策中心", href: "/decision", icon: Activity },
+  ];
+
+  const isActive = (href: string | null) => {
+    if (!href) {
+      return pathname?.startsWith("/pre-market") || pathname?.startsWith("/intraday") || pathname?.startsWith("/after-market");
+    }
+    return pathname === href;
+  };
+
   return (
     <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -26,11 +55,58 @@ export default function Header() {
           <nav className="flex items-center gap-1">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const active = isActive(item.href);
+
+              if (item.children) {
+                return (
+                  <div key={item.name} className="group relative">
+                    <button
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        active
+                          ? "text-blue-600 bg-blue-50"
+                          : "text-gray-600 hover:text-blue-600 hover:bg-blue-50"
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      <span className="hidden sm:inline">{item.name}</span>
+                      <ChevronDown className="w-3 h-3 ml-0.5" />
+                    </button>
+                    {/* Dropdown */}
+                    <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg border border-gray-200 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                      <div className="py-1">
+                        {item.children.map((child) => {
+                          const ChildIcon = child.icon;
+                          const childActive = pathname === child.href;
+                          return (
+                            <Link
+                              key={child.href}
+                              href={child.href}
+                              className={`flex items-center gap-2 px-4 py-2.5 text-sm transition-colors ${
+                                childActive
+                                  ? "text-blue-600 bg-blue-50 font-medium"
+                                  : "text-gray-700 hover:bg-gray-50 hover:text-blue-600"
+                              }`}
+                            >
+                              <ChildIcon className="w-4 h-4" />
+                              {child.name}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <Link
-                  key={item.href}
-                  href={item.href}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                  key={item.href || item.name}
+                  href={item.href!}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    active
+                      ? "text-blue-600 bg-blue-50"
+                      : "text-gray-600 hover:text-blue-600 hover:bg-blue-50"
+                  }`}
                 >
                   <Icon className="w-4 h-4" />
                   <span className="hidden sm:inline">{item.name}</span>
