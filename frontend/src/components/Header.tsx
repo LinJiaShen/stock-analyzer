@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,10 +13,33 @@ import {
   Sun,
   Monitor,
   Moon,
+  LayoutDashboard,
+  LogIn,
+  LogOut,
+  User,
 } from "lucide-react";
 
 export default function Header() {
   const pathname = usePathname();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [username, setUsername] = useState("");
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const storedUsername = localStorage.getItem("username");
+    if (token) {
+      setIsLoggedIn(true);
+      setUsername(storedUsername || "");
+    }
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    setIsLoggedIn(false);
+    setUsername("");
+    window.location.href = "/login";
+  };
 
   const navItems = [
     {
@@ -28,15 +52,29 @@ export default function Header() {
         { name: "盤後覆盤", href: "/after-market", icon: Moon },
       ],
     },
+    { name: "個股分析", href: "/stock/2330", icon: TrendingUp },
     { name: "技術分析", href: "/technical", icon: TrendingUp },
     { name: "籌碼分析", href: "/chip", icon: BarChart3 },
     { name: "情緒分析", href: "/sentiment", icon: Brain },
     { name: "決策中心", href: "/decision", icon: Activity },
+    ...(isLoggedIn ? [{
+      name: "持倉",
+      href: null as string | null,
+      icon: LayoutDashboard,
+      children: [
+        { name: "持倉管理", href: "/holdings", icon: BarChart3 },
+        { name: "持倉分析", href: "/holdings/analysis", icon: Activity },
+      ],
+    }] : []),
   ];
 
   const isActive = (href: string | null) => {
     if (!href) {
-      return pathname?.startsWith("/pre-market") || pathname?.startsWith("/intraday") || pathname?.startsWith("/after-market");
+      return pathname?.startsWith("/pre-market") || pathname?.startsWith("/intraday") || pathname?.startsWith("/after-market") || pathname?.startsWith("/holdings");
+    }
+    // 個股分析入口：當路徑以 /stock/ 開頭時高亮
+    if (href === "/stock/2330") {
+      return pathname?.startsWith("/stock/");
     }
     return pathname === href;
   };
@@ -116,6 +154,33 @@ export default function Header() {
               );
             })}
           </nav>
+
+          {/* Auth buttons */}
+          <div className="flex items-center gap-2">
+            {isLoggedIn ? (
+              <>
+                <span className="text-sm text-gray-600 flex items-center gap-1">
+                  <User className="w-4 h-4" />
+                  {username}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">登出</span>
+                </button>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              >
+                <LogIn className="w-4 h-4" />
+                <span className="hidden sm:inline">登入</span>
+              </Link>
+            )}
+          </div>
         </div>
       </div>
     </header>

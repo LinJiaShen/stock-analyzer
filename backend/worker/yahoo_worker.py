@@ -13,7 +13,7 @@ import httpx
 from app.config import settings
 from app.database import async_session_factory
 from app.models.stock import Stock
-from app.models.daily_bar import DailyBar
+from app.models.daily_bar import DailyBar, MinuteBar
 from app.utils.cache import Cache
 from sqlalchemy import select
 
@@ -49,6 +49,9 @@ class YahooWorker:
             self._session = httpx.AsyncClient(
                 timeout=30.0,
                 headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                },
+                headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 },
             )
@@ -78,13 +81,17 @@ class YahooWorker:
         client = await self._get_session()
         params = {
             "symbol": symbol,
-            "period1": (date.today() - timedelta(days=30)).isoformat(),
-            "period2": date.today().isoformat(),
+            "period1": int((datetime.now() - timedelta(days=365)).timestamp()),
+            "period2": int(datetime.now().timestamp()),
             "interval": interval,
         }
 
         try:
             response = await client.get(YAHOO_CHART_URL, params=params)
+            if response.status_code == 429:
+                logger.warning(f"Yahoo Finance 速率限制 [{symbol}]，等待 5 秒後重試...")
+                await asyncio.sleep(5)
+                response = await client.get(YAHOO_CHART_URL, params=params)
             response.raise_for_status()
             data = response.json()
 
@@ -260,6 +267,105 @@ class YahooWorker:
             await session.commit()
             logger.info(f"儲存 {stock_code} K 線數據: {saved} 筆")
             return saved
+
+
+    async def save_minute_kline_data(
+        self, stock_code: str, interval_minutes: int, klines: list[dict]
+    ) -> int:
+        """
+        將分 K 線數據存入資料庫
+
+        Args:
+            stock_code: 股票代碼
+            interval_minutes: 分K間隔 (1, 3, 5, 15, 30, 60)
+            klines: 分K數據列表，每個 dict 包含 datetime, open, high, low, close, volume
+
+        Returns:
+            成功儲存的筆數
+        """
+        saved = 0
+        async with async_session_factory() as session:
+            # 確保股票記錄存在
+            result = await session.execute(
+                select(Stock).where(Stock.code == stock_code)
+            )
+            stock = result.scalar_one_or_none()
+
+            if not stock:
+                stock = Stock(
+                    code=stock_code,
+                    name=f"股票{stock_code}",
+                )
+                session.add(stock)
+                await session.flush()
+
+            for kline in klines:
+                bar_time = kline.get("datetime") or kline.get("date")
+                if not bar_time:
+                    continue
+
+                # 檢查是否已存在
+                existing = await session.execute(
+                    select(MinuteBar).where(
+                        MinuteBar.stock_code == stock_code,
+                        MinuteBar.bar_time == bar_time,
+                        MinuteBar.interval_minutes == interval_minutes,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                bar = MinuteBar(
+                    stock_code=stock_code,
+                    bar_time=bar_time,
+                    interval_minutes=interval_minutes,
+                    open_price=kline.get("open"),
+                    high_price=kline.get("high"),
+                    low_price=kline.get("low"),
+                    close_price=kline.get("close"),
+                    volume=kline.get("volume", 0),
+                )
+                session.add(bar)
+                saved += 1
+
+            await session.commit()
+            logger.info(f"儲存 {stock_code} 分K數據 ({interval_minutes}min): {saved} 筆")
+            return saved
+
+    async def cleanup_expired_minute_bars(self, max_days: dict[int, int] = None) -> int:
+        """
+        清理過期的分 K 線數據
+
+        Args:
+            max_days: 分K間隔對應的最大保留天數 {interval_minutes: days}
+                      預設: {1: 7, 3: 7, 5: 14, 15: 14, 30: 30, 60: 30}
+
+        Returns:
+            刪除的筆數
+        """
+        if max_days is None:
+            max_days = {1: 7, 3: 7, 5: 14, 15: 14, 30: 30, 60: 30}
+
+        from sqlalchemy import delete
+
+        total_deleted = 0
+        async with async_session_factory() as session:
+            for interval_minutes, days in max_days.items():
+                cutoff = datetime.now() - timedelta(days=days)
+                result = await session.execute(
+                    delete(MinuteBar).where(
+                        MinuteBar.interval_minutes == interval_minutes,
+                        MinuteBar.bar_time < cutoff,
+                    )
+                )
+                total_deleted += result.rowcount
+                logger.info(f"清理 {interval_minutes}min 分K: 刪除 {result.rowcount} 筆 (> {days}天)")
+
+            await session.commit()
+
+        if total_deleted > 0:
+            logger.info(f"分K數據清理完成: 共刪除 {total_deleted} 筆")
+        return total_deleted
 
 
 # 全域實例
