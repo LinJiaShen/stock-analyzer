@@ -182,7 +182,7 @@ async def get_stock_industry(
 @router.get("/{stock_code}/kline", response_model=KLineResponse)
 async def get_kline_data(
     stock_code: str,
-    interval: str = Query("1d", description="K線週期: 1m, 5m, 15m, 1h, 1d"),
+    interval: str = Query("1d", description="K線週期: 1m, 5m, 15m, 1h, 1d, 1w, 1mo"),
     start_date: Optional[date] = Query(None, description="開始日期"),
     end_date: Optional[date] = Query(None, description="結束日期"),
     adjusted: bool = Query(True, description="是否使用還原權值"),
@@ -201,7 +201,7 @@ async def get_kline_data(
     優先從本地 TimescaleDB 查詢，若無數據則從 Yahoo Finance 抓取並自動儲存
     """
     if not start_date:
-        start_date = date.today() - timedelta(days=365)
+        start_date = date.today() - timedelta(days=1095)  # 預設 3 年，確保 MA240 有足夠資料
     if not end_date:
         end_date = date.today()
 
@@ -248,8 +248,15 @@ async def get_kline_data(
         "1d": "1d", "1w": "1wk", "1mo": "1mo",
     }.get(interval, "1d")
 
+    # 各 interval 對應抓取期間：週/月線需要更長歷史
+    yahoo_period_map = {
+        "1d": "3y",
+        "1w": "5y",   "1wk": "5y",
+        "1mo": "max",
+    }
+    yahoo_period = yahoo_period_map.get(interval, "60d")  # 分K最多 60 天
     chart_data = await yahoo_worker.fetch_chart_data(
-        yahoo_symbol, period="1y", interval=yahoo_interval
+        yahoo_symbol, period=yahoo_period, interval=yahoo_interval
     )
 
     if not chart_data or "chart" not in chart_data or not chart_data["chart"]["result"]:
@@ -288,8 +295,8 @@ async def get_kline_data(
         else:
             final_close = close_val
 
-        # 分 K 線使用完整 datetime，日 K 線使用 date
-        point_date = dt if interval != "1d" else dt.date()
+        # 日/週/月 K 用 date；分 K 用完整 datetime
+        point_date = dt.date() if interval in ("1d", "1w", "1mo") else dt
 
         all_points.append(KLinePoint(
             date=point_date,

@@ -79,18 +79,26 @@ export default function TechnicalPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [technicalResult, setTechnicalResult] = useState<TechnicalResult | null>(null);
+  const [interval, setInterval] = useState<"1d" | "1w" | "1mo">("1d");
+
+  const INTERVALS: { value: "1d" | "1w" | "1mo"; label: string }[] = [
+    { value: "1d", label: "日線" },
+    { value: "1w", label: "週線" },
+    { value: "1mo", label: "月線" },
+  ];
 
   // 獲取 K 線數據
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       setError(null);
+      setTechnicalResult(null);
       try {
         let apiSuccess = false;
 
-        // 獲取 K 線數據 (最近 60 天)
+        // 獲取 K 線數據
         try {
-          const klineRes = await api.get(`/api/stocks/${selectedCode}/kline?interval=1d`);
+          const klineRes = await api.get(`/api/stocks/${selectedCode}/kline?interval=${interval}`);
           const rawData = klineRes.data?.data || [];
 
           if (rawData.length > 0) {
@@ -118,28 +126,36 @@ export default function TechnicalPage() {
 
         // 獲取技術分析結果
         try {
-          const techRes = await api.get(`/api/analysis/technical/${selectedCode}?period=medium`);
+          const techRes = await api.get(
+            `/api/analysis/technical/${selectedCode}?period=medium&interval=${interval}`
+          );
           const techData = techRes.data;
 
           if (techData?.has_data) {
+            // 後端回傳新格式：欄位直接在頂層
+            const strengthPct = typeof techData.trend?.strength === "number"
+              ? (techData.trend.strength <= 1 ? Math.round(techData.trend.strength * 100) : techData.trend.strength)
+              : 50;
             setTechnicalResult({
               score: techData.score ?? 50,
-              signal: techData.score >= 65 ? "買入" : techData.score <= 35 ? "賣出" : "持有",
-              ma_alignment: techData.ma_alignment?.alignment === "bullish" ? "多頭排列" : techData.ma_alignment?.alignment === "bearish" ? "空頭排列" : "交錯排列",
+              signal: techData.signal ?? (techData.score >= 65 ? "買入" : techData.score <= 35 ? "賣出" : "持有"),
+              ma_alignment: typeof techData.ma_alignment === "string"
+                ? techData.ma_alignment
+                : (techData.ma_alignment?.alignment === "bullish" ? "多頭排列" : techData.ma_alignment?.alignment === "bearish" ? "空頭排列" : "交錯排列"),
               trend: {
-                direction: techData.trend?.direction === "up" || techData.trend?.direction === "strong_up" ? "上升" : "下降",
-                strength: techData.trend?.strength ?? 50,
+                direction: techData.trend?.direction ?? "未知",
+                strength: strengthPct,
               },
-              rsi: techData.indicators?.rsi ?? 50,
+              rsi: techData.rsi ?? techData.indicators?.rsi ?? 50,
               macd: {
-                macd_line: techData.indicators?.macd ?? 0,
-                signal_line: techData.indicators?.macd_signal ?? 0,
-                histogram: techData.indicators?.macd_histogram ?? 0,
+                macd_line: techData.macd?.macd_line ?? techData.indicators?.macd ?? 0,
+                signal_line: techData.macd?.signal_line ?? techData.indicators?.macd_signal ?? 0,
+                histogram: techData.macd?.histogram ?? techData.indicators?.macd_histogram ?? 0,
               },
               kdj: {
-                k: techData.indicators?.k ?? 50,
-                d: techData.indicators?.d ?? 50,
-                j: techData.indicators?.j ?? 50,
+                k: techData.kdj?.k ?? techData.indicators?.kdj_k ?? 50,
+                d: techData.kdj?.d ?? techData.indicators?.kdj_d ?? 50,
+                j: techData.kdj?.j ?? techData.indicators?.kdj_j ?? 50,
               },
               bollinger: {
                 upper: techData.bollinger?.upper ?? 0,
@@ -164,7 +180,7 @@ export default function TechnicalPage() {
     };
 
     fetchData();
-  }, [selectedCode]);
+  }, [selectedCode, interval]);
 
   // 自動產生技術標註 (基於 MA 交叉和量價分析)
   const annotations = useMemo((): TechnicalAnnotation[] => {
@@ -490,7 +506,25 @@ export default function TechnicalPage() {
       {/* K 線圖 + MA + 技術標註 */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-gray-900">K 線圖 + 移動平均線 + 技術標註 ({klineData.length} 根 K 線)</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-base font-semibold text-gray-900">K 線圖 + 移動平均線 + 技術標註 ({klineData.length} 根 K 線)</h3>
+            {/* 日/週/月 切換 */}
+            <div className="flex bg-gray-100 rounded-lg p-0.5">
+              {INTERVALS.map((iv) => (
+                <button
+                  key={iv.value}
+                  onClick={() => setInterval(iv.value)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    interval === iv.value
+                      ? "bg-white text-blue-600 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {iv.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-green-500"></span>

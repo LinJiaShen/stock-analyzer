@@ -79,12 +79,16 @@ export function usePreMarket() {
 }
 
 // 分析 API
-export function useTechnicalAnalysis(code: string, period: string = "medium") {
+export function useTechnicalAnalysis(
+  code: string,
+  period: string = "medium",
+  interval: string = "1d"
+) {
   return useQuery<TechnicalAnalysis>({
-    queryKey: ["technical", code, period],
+    queryKey: ["technical", code, period, interval],
     queryFn: async () => {
       const { data } = await api.get(`/api/analysis/technical/${code}`, {
-        params: { period },
+        params: { period, interval },
       });
       return data;
     },
