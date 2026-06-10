@@ -725,59 +725,59 @@ const PATTERN_ICONS: Record<string, { icon: string; color: string }> = {
 
 ## 9. 實作順序（更新）
 
-1. **後端: K 線形態辨識引擎**
-   - 建立 `backend/app/services/pattern.py`
-   - 實作 ATR 計算（向量化）
-   - 實作單根 K 線形態偵測（Marubozu, Hammer, Doji...）
-   - 實作多根組合形態偵測（Engulfing, Star, Island）
-   - 實作形態評分函數
+1. ✅ **後端: K 線形態辨識引擎**
+   - ✅ 建立 `backend/app/services/pattern.py`
+   - ✅ 實作 ATR 計算（向量化）
+   - ✅ 實作單根 K 線形態偵測（Marubozu, Hammer, Doji...）
+   - ✅ 實作多根組合形態偵測（Engulfing, Star, Island）
+   - ✅ 實作形態評分函數
 
-2. **後端: 決策樹整合 K 線形態**
-   - 修改 `scoring.py` 新增形態因子
-   - 調整各維度權重
-   - 更新 API 回傳結構
+2. ✅ **後端: 決策樹整合 K 線形態**
+   - ✅ 修改 `scoring.py` 新增形態因子
+   - ✅ 調整各維度權重
+   - ✅ 更新 API 回傳結構
 
-3. **後端: Yahoo Worker 統一 K 線抓取介面**
-   - 重構 `fetch_chart_data` 為 `fetch_kline`
-   - 支援多 interval/period 參數
-   - 支援 limit 筆數限制
+3. ✅ **後端: Yahoo Worker 統一 K 線抓取介面**
+   - ✅ 重構 `fetch_chart_data` 為 `fetch_kline`
+   - ✅ 支援多 interval/period 參數
+   - ✅ 支援 limit 筆數限制
 
-4. **後端: stocks API 支援多週期**
-   - 新增 `limit` 參數
-   - 擴充 `interval` 支援週/月/分 K
-   - Yahoo interval 映射表
+4. ✅ **後端: stocks API 支援多週期**
+   - ✅ 新增 `limit` 參數
+   - ✅ 擴充 `interval` 支援週/月/分 K
+   - ✅ Yahoo interval 映射表
 
-5. **前端: CandlestickChart 組件更新**
-   - MA 線改為 [5, 10, 20, 60, 120]
-   - 支援自訂 maPeriods prop
-   - 新增形態標註渲染
-   - 更新圖例
+5. ✅ **前端: CandlestickChart 組件更新**
+   - ✅ MA 線改為 [5, 10, 20, 60, 120]
+   - ✅ 支援自訂 maPeriods prop
+   - ✅ 新增形態標註渲染
+   - ✅ 更新圖例
 
-6. **前端: K 線週期切換器組件**
-   - 日/週/月/分K 按鈕
-   - 分K 下拉選單
-   - interval 映射
+6. ✅ **前端: K 線週期切換器組件**
+   - ✅ 日/週/月/分K 按鈕
+   - ✅ 分K 下拉選單
+   - ✅ interval 映射
 
-7. **前端: 建立 /stock/[code] 頁面**
-   - 基本佈局（頁頭 + Tab 導航）
-   - 技術分析 Tab（整合現有 technical/page.tsx 內容）
-   - 籌碼分析 Tab（整合現有 chip/page.tsx 內容）
-   - 情緒分析 Tab（整合現有 sentiment/page.tsx 內容）
-   - 決策評分 Tab（整合現有 decision/page.tsx 內容）
+7. ✅ **前端: 建立 /stock/[code] 頁面**
+   - ✅ 基本佈局（頁頭 + Tab 導航）
+   - ✅ 技術分析 Tab（整合現有 technical/page.tsx 內容）
+   - ✅ 籌碼分析 Tab（整合現有 chip/page.tsx 內容）
+   - ✅ 情緒分析 Tab（整合現有 sentiment/page.tsx 內容）
+   - ✅ 決策評分 Tab（整合現有 decision/page.tsx 內容）
 
-8. **前端: 各 Tab 改為真實 API 數據**
-   - 籌碼分析 Tab 串接 `/api/analysis/chip/{code}`
-   - 情緒分析 Tab 串接 `/api/analysis/sentiment/{code}`
-   - 決策評分 Tab 串接 `/api/decision/score/{code}` + `/api/decision/radar/{code}`
+8. ✅ **前端: 各 Tab 改為真實 API 數據**
+   - ✅ 籌碼分析 Tab 串接 `/api/analysis/chip/{code}`
+   - ✅ 情緒分析 Tab 串接 `/api/analysis/sentiment/{code}`
+   - ✅ 決策評分 Tab 串接 `/api/decision/score/{code}` + `/api/decision/radar/{code}`
 
-9. **Header 導航更新**
-   - 新增「個股分析」連結（或從搜尋結果跳轉）
+9. ✅ **Header 導航更新**
+   - ✅ 新增「個股分析」連結（或從搜尋結果跳轉）
 
-10. **測試與優化**
-    - K 線形態辨識正確性驗證（對照歷史數據）
-    - 各週期 K 線圖顯示測試
-    - MA 線計算正確性驗證
-    - 頁面載入效能優化（Tab 懶載入）
+10. ⏳ **測試與優化**
+    - ⏳ K 線形態辨識正確性驗證（對照歷史數據）
+    - ⏳ 各週期 K 線圖顯示測試
+    - ⏳ MA 線計算正確性驗證
+    - ⏳ 頁面載入效能優化（Tab 懶載入）
 
 ## 10. 注意事項
 
