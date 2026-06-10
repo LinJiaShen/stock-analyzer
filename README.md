@@ -77,7 +77,7 @@ stock-analyzer/
 │   │   ├── models/       # SQLAlchemy ORM (user, stock, daily_bar, holding, analysis, trade_log)
 │   │   ├── schemas/      # Pydantic 驗證
 │   │   ├── routers/      # API 路由 (auth, stocks, analysis, decision, holdings, admin)
-│   │   ├── services/     # 業務邏輯 (technical, chip, sentiment, industry, scoring)
+│   │   ├── services/     # 業務邏輯 (technical, chip, sentiment, industry, scoring, pattern)
 │   │   └── utils/        # 工具函式 (cache, security)
 │   ├── worker/           # 獨立數據 Worker (twse, yahoo, crawler, sentiment, stock_list)
 │   └── tests/
@@ -94,10 +94,12 @@ stock-analyzer/
 4. ✅ 股票代碼管理 + 歷史數據批量初始化
 5. ✅ 深度分析引擎 (技術分析, 籌碼分析, 產業鏈, LLM 情緒)
 6. ✅ 決策工具模組 (多因子評分, 雷達圖, 決策樹訊號)
-7. ✅ 前端 Next.js 專案初始化
-8. 🚧 時間軸戰情室 UI
-9. ⏳ 個人化決策中心 UI
-10. ⏳ 系統整合測試
+7. ✅ K線形態辨識引擎 (Marubozu, Hammer, Doji, Engulfing, Star, Island)
+8. ✅ 前端 Next.js 專案初始化
+9. ✅ 時間軸戰情室 UI (盤前/盤中/盤後)
+10. ✅ 個股整合頁面 (/stock/[code])
+11. ✅ 多週期 K 線圖 (日/週/月/分K + MA5/10/20/60/120)
+12. ⏳ 系統整合測試
 
 ## 授權
 
