@@ -32,12 +32,14 @@ COOKIE_NAME = "access_token"
 
 def _set_auth_cookie(response: Response, token: str) -> None:
     """設定 HttpOnly 認證 Cookie"""
+    is_https = settings.COOKIE_DOMAIN != ""
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
-        httponly=True,                              # JS 無法讀取（防 XSS）
-        secure=settings.ENV == "production",        # 生產環境僅 HTTPS
-        samesite="lax",                             # 基本 CSRF 防護
+        httponly=True,
+        secure=is_https,
+        samesite="none" if is_https else "lax",
+        domain=settings.COOKIE_DOMAIN if settings.COOKIE_DOMAIN else None,
         max_age=settings.JWT_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -142,7 +144,15 @@ async def login(
 @router.post("/logout")
 async def logout(response: Response):
     """登出 — 清除認證 Cookie"""
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+    is_https = settings.COOKIE_DOMAIN != ""
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        domain=settings.COOKIE_DOMAIN if settings.COOKIE_DOMAIN else None,
+        secure=is_https,
+        samesite="none" if is_https else "lax",
+        httponly=True,
+    )
     return {"message": "已登出"}
 
 

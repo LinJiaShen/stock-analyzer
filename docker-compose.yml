@@ -37,7 +37,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,https://tstock.uk,https://www.tstock.uk}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-.tstock.uk}
       PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"

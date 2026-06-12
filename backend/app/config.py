@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000"
+
+    # Cookie domain（留空 = localhost，設 .tstock.uk = 跨 subdomain）
+    COOKIE_DOMAIN: str = ""
     
     @property
     def allowed_origins(self) -> List[str]:
