@@ -28,6 +28,7 @@ export interface TechnicalAnnotation {
   position: "top" | "bottom";
   detail: string;
   pattern: string;
+  price?: number;
 }
 
 interface Props {
@@ -364,7 +365,8 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
           {visibleWithMA.map((d, i) => {
             const x = PAD.left + i * barW + barW / 2;
             const isUp = d.close >= d.open;
-            const color = isUp ? "#22c55e" : "#ef4444";
+            // 台股慣例：紅K=漲、綠K=跌
+            const color = isUp ? "#ef4444" : "#16a34a";
             const bodyTop = priceToY(Math.max(d.open, d.close));
             const bodyBottom = priceToY(Math.min(d.open, d.close));
             const bodyH = Math.max(bodyBottom - bodyTop, 1.5);
@@ -490,6 +492,19 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
           </div>
           <div className="flex justify-between text-xs text-gray-400 mt-0.5 px-0.5">
             <span>{data[0]?.date}</span>
+            {(() => {
+              // 當數據跨度超過一年時，顯示中間的年份標記
+              const firstDate = data[0]?.date;
+              const lastDate = data[data.length - 1]?.date;
+              if (firstDate && lastDate && data.length > 30) {
+                const midIndex = Math.floor(data.length / 2);
+                const midDate = data[midIndex]?.date;
+                if (midDate && midDate !== firstDate && midDate !== lastDate) {
+                  return <span>{midDate}</span>;
+                }
+              }
+              return null;
+            })()}
             <span>{data[data.length - 1]?.date}</span>
           </div>
         </div>

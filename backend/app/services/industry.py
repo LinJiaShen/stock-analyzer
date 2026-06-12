@@ -23,16 +23,16 @@ class IndustryService:
 
     async def _get_stock_industry(self, stock_code: str) -> Optional[str]:
         """取得股票所屬產業"""
-        stmt = select(Stock.industry).where(Stock.code == stock_code)
+        stmt = select(Stock.industry_name).where(Stock.code == stock_code)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def _get_peers(self, industry: str, exclude_code: str, limit: int = 10) -> list[dict]:
         """取得同業股票"""
         stmt = (
-            select(Stock.code, Stock.name, Stock.industry)
+            select(Stock.code, Stock.name)
             .where(
-                Stock.industry == industry,
+                Stock.industry_name == industry,
                 Stock.code != exclude_code,
             )
             .limit(limit)
@@ -58,8 +58,9 @@ class IndustryService:
         if len(bars) < 2:
             return None
 
-        first_close = bars[0].close
-        last_close = bars[-1].close
+        # 用還原權值收盤價計算報酬率，避免除權息失真
+        first_close = float(bars[0].adjusted_close or bars[0].close_price or 0)
+        last_close = float(bars[-1].adjusted_close or bars[-1].close_price or 0)
 
         if first_close and last_close and first_close > 0:
             return (last_close - first_close) / first_close * 100
@@ -147,20 +148,24 @@ class IndustryService:
         """
         stmt = select(IndustryChain).where(IndustryChain.stock_code == stock_code)
         result = await self.db.execute(stmt)
-        chain = result.scalar_one_or_none()
+        chains = result.scalars().all()
 
-        if not chain:
-            return {
-                "upstream_industries": [],
-                "downstream_industries": [],
-                "chain_position": "unknown",
-                "transmission_effect": "neutral",
-            }
+        upstream = [c.parent_industry for c in chains if c.relation_type == "upstream"]
+        downstream = [c.parent_industry for c in chains if c.relation_type == "downstream"]
+
+        if upstream and downstream:
+            position = "midstream"
+        elif upstream:
+            position = "downstream"
+        elif downstream:
+            position = "upstream"
+        else:
+            position = "unknown"
 
         return {
-            "upstream_industries": chain.upstream_industries or [],
-            "downstream_industries": chain.downstream_industries or [],
-            "chain_position": chain.chain_position or "unknown",
+            "upstream_industries": upstream,
+            "downstream_industries": downstream,
+            "chain_position": position,
             "transmission_effect": "neutral",
         }
 
@@ -172,11 +177,6 @@ class IndustryService:
         - 輪動階段判斷
         """
         industry = await self._get_stock_industry(stock_code)
-
-        # 取得所有產業的平均報酬
-        stmt = select(Stock.industry, func.avg(DailyBar.close)).where(
-            DailyBar.trade_date >= datetime.now() - timedelta(days=days)
-        ).group_by(Stock.industry)
 
         # 簡化版本：回傳基本輪動資訊
         return {

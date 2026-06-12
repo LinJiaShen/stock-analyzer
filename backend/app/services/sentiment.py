@@ -29,9 +29,9 @@ class SentimentService:
             select(SentimentData)
             .where(
                 SentimentData.stock_code == stock_code,
-                SentimentData.created_at >= cutoff_date,
+                SentimentData.time >= cutoff_date,
             )
-            .order_by(desc(SentimentData.created_at))
+            .order_by(desc(SentimentData.time))
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()
@@ -57,8 +57,8 @@ class SentimentService:
                 "keywords": [],
             }
 
-        # 計算情緒比例
-        scores = [s.sentiment_score or 0 for s in sentiment_data_list]
+        # 計算情緒比例（Numeric → float）
+        scores = [float(s.sentiment_score or 0) for s in sentiment_data_list]
         positive_count = sum(1 for s in scores if s > 0.1)
         negative_count = sum(1 for s in scores if s < -0.1)
         neutral_count = len(scores) - positive_count - negative_count
@@ -94,9 +94,9 @@ class SentimentService:
         # 關鍵詞 (從標題中提取)
         keywords = []
         for s in sentiment_data_list[:10]:
-            if s.title:
+            if s.raw_text:
                 # 簡單關鍵詞提取 (實際應使用 NLP)
-                words = s.title.split()
+                words = s.raw_text.split()
                 keywords.extend(words[:5])
 
         return {
@@ -120,8 +120,8 @@ class SentimentService:
         cutoff_date = datetime.now() - timedelta(days=7)
         stmt = (
             select(SentimentData)
-            .where(SentimentData.created_at >= cutoff_date)
-            .order_by(desc(SentimentData.created_at))
+            .where(SentimentData.time >= cutoff_date)
+            .order_by(desc(SentimentData.time))
         )
         result = await self.db.execute(stmt)
         all_data = result.scalars().all()
@@ -133,7 +133,7 @@ class SentimentService:
                 "signal": "neutral",
             }
 
-        scores = [s.sentiment_score or 0 for s in all_data]
+        scores = [float(s.sentiment_score or 0) for s in all_data]
         overall_score = float(np.mean(scores))
 
         # 恐慌/貪婪指數 (0-100)
@@ -158,12 +158,47 @@ class SentimentService:
             "signal": signal,
         }
 
+    async def _ensure_news_data(self, stock_code: str, days: int) -> None:
+        """無近期新聞資料時，即時抓取並評分（首次查詢約需 5-30 秒）"""
+        existing = await self._fetch_sentiment_data(stock_code, days)
+        if existing:
+            return
+        try:
+            from sqlalchemy import select as sa_select
+            from app.models.stock import Stock
+            from worker.crawler_worker import fetch_and_analyze_stock
+
+            result = await self.db.execute(sa_select(Stock.name).where(Stock.code == stock_code))
+            stock_name = result.scalar_one_or_none() or ""
+            await fetch_and_analyze_stock(stock_code, stock_name)
+        except Exception:
+            pass  # 抓取失敗時以無資料狀態回應
+
+    async def get_recent_news(self, stock_code: str, days: int = 7, limit: int = 15) -> list[dict]:
+        """近期新聞列表（含個別情緒評分）"""
+        data = await self._fetch_sentiment_data(stock_code, days)
+        return [
+            {
+                "title": s.raw_text,
+                "source": s.source,
+                "time": s.time.isoformat() if s.time else None,
+                "sentiment_score": float(s.sentiment_score or 0),
+                "summary": s.llm_summary or "",
+            }
+            for s in data[:limit]
+            if s.raw_text
+        ]
+
     async def analyze(self, stock_code: str, days: int = 7) -> dict:
         """
         完整情緒分析
         """
+        # 無資料時即時抓取新聞並以 LLM 評分
+        await self._ensure_news_data(stock_code, days)
+
         news_sentiment = await self.analyze_news_sentiment(stock_code, days)
         market_sentiment = await self.analyze_market_sentiment()
+        recent_news = await self.get_recent_news(stock_code, days)
 
         # 綜合評分
         score = 50  # 基準分
@@ -197,5 +232,7 @@ class SentimentService:
             "signal": overall_signal,
             "news_sentiment": news_sentiment,
             "market_sentiment": market_sentiment,
+            "news": recent_news,
+            "method": "新聞標題經本地 LLM（Ollama）逐則評分 -1.0~1.0，加權平均後映射至 0-100；市場情緒以全市場新聞均值計算貪婪恐懼指數",
             "analyzed_at": datetime.now().isoformat(),
         }

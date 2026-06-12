@@ -26,11 +26,11 @@ class ScoringService:
 
     # 各維度權重（總和 = 1.0）
     WEIGHTS = {
-        "technical": 0.25,
-        "chip": 0.25,
-        "fundamental": 0.20,
-        "sentiment": 0.20,
-        "pattern": 0.10,
+        "technical": 0.30,
+        "chip": 0.20,
+        "fundamental": 0.15,
+        "sentiment": 0.15,
+        "pattern": 0.20,
     }
 
     def __init__(self, db: AsyncSession):
@@ -41,12 +41,28 @@ class ScoringService:
         self.industry_service = IndustryService(db)
         self.pattern_service = PatternService()
 
+    async def _ensure_kline_data(self, stock_code: str) -> None:
+        """確保有 K 線數據；若 DB 無資料則同步抓取（阻塞直到完成）"""
+        bars = await self.tech_service._fetch_bars(stock_code, days=30)
+        if len(bars) < 20:
+            try:
+                from worker.yahoo_worker import yahoo_worker
+                symbol = f"{stock_code}.TW"
+                klines = await yahoo_worker.fetch_historical_kline(symbol, 1095)
+                if klines:
+                    await yahoo_worker.save_kline_data(stock_code, klines)
+            except Exception:
+                pass
+
     async def calculate_composite_score(self, stock_code: str) -> dict:
         """
         多因子綜合評分
         回傳 0-100 的綜合戰鬥力分數
         包含: 技術面、籌碼面、基本面、情緒面、K線形態
         """
+        # 確保有足夠的 K 線數據（首次查詢會自動抓取，約 5-10 秒）
+        await self._ensure_kline_data(stock_code)
+
         # 並行取得各維度分析
         technical = await self.tech_service.analyze(stock_code, "medium")
         chip = await self.chip_service.analyze(stock_code, 90)
@@ -57,6 +73,20 @@ class ScoringService:
         bars = await self.tech_service._fetch_bars(stock_code, days=120)
         patterns = self.pattern_service.detect_all(bars)
         pattern_score = self.pattern_service.get_pattern_score(patterns)
+
+        # ATR 與進出場參考價位（bars 為 dict：open/high/low/close/volume）
+        current_price = None
+        atr_14 = None
+        resistance = None
+        support = None
+        if len(bars) >= 15:
+            current_price = float(bars[-1]["close"]) or None
+            atr_14 = self._calculate_atr(bars, 14)
+            # 以近 20 根 K 線的最高/最低作為壓力/支撐代理
+            recent = bars[-20:]
+            resistance = round(max(b["high"] or 0 for b in recent), 1)
+            support_vals = [b["low"] or b["close"] for b in recent if b["low"] or b["close"]]
+            support = round(min(support_vals), 1) if support_vals else None
         # 將 -100~100 轉換為 0~100
         pattern_norm = (pattern_score + 100) / 2
 
@@ -93,6 +123,24 @@ class ScoringService:
         else:
             health_level = "critical"
 
+        # 操作建議（ATR 停損 / 壓力位目標 / 風報比）— 不依賴訊號，有價格資料就提供
+        operation = None
+        if current_price and atr_14:
+            stop_loss = round(current_price - 1.5 * atr_14, 1)
+            target = round(resistance, 1) if resistance and resistance > current_price else round(current_price * 1.05, 1)
+            risk = current_price - stop_loss
+            reward = target - current_price
+            rr = round(reward / risk, 1) if risk > 0 else 0
+            operation = {
+                "entry_note": f"參考進場區間 {round(current_price * 0.99, 1)}–{round(current_price * 1.005, 1)}（現價 {round(current_price, 1)}，依 ATR 波動 {round(atr_14, 1)} 計算）",
+                "stop_loss": stop_loss,
+                "stop_loss_pct": round((stop_loss - current_price) / current_price * 100, 1),
+                "target": target,
+                "target_pct": round((target - current_price) / current_price * 100, 1),
+                "rr_ratio": rr,
+                "hold_period": "波段（2–4 週）",
+            }
+
         return {
             "stock_code": stock_code,
             "total_score": total_score,
@@ -106,7 +154,26 @@ class ScoringService:
             "health_level": health_level,
             "weights": self.WEIGHTS,
             "analyzed_at": datetime.now().isoformat(),
+            "current_price": current_price,
+            "atr_14": round(atr_14, 2) if atr_14 else None,
+            "resistance": resistance,
+            "support": support,
+            "operation": operation,
         }
+
+    def _calculate_atr(self, bars: list[dict], period: int = 14) -> float:
+        """計算平均真實波幅 (ATR)；bars 為 dict 格式"""
+        trs = []
+        for i in range(1, len(bars)):
+            h = bars[i]["high"] or 0
+            l = bars[i]["low"] or 0
+            pc = bars[i - 1]["close"] or 0
+            if h == 0 and l == 0:
+                continue
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        if not trs:
+            return 0.0
+        return float(np.mean(trs[-period:]))
 
     async def calculate_radar_data(self, stock_code: str) -> dict:
         """
@@ -133,7 +200,7 @@ class ScoringService:
         value_score = 50
         if bars:
             # 用價格相對位置作為價值代理
-            closes = [b.close for b in bars if b.close]
+            closes = [float(b.close_price) for b in bars if b.close_price]
             if len(closes) >= 60:
                 current_price = closes[-1]
                 avg_price = np.mean(closes)
@@ -237,42 +304,106 @@ class ScoringService:
         """
         決策樹評估
         基於多層條件判斷產生訊號
+        整合 K 線形態因子作為輔助判斷
         """
         total = score_data["total_score"]
         tech = score_data["technical_score"]
         chip = score_data["chip_score"]
         sentiment = score_data["sentiment_score"]
         fundamental = score_data["fundamental_score"]
+        pattern_norm = score_data.get("pattern_norm", 50)
+        recent_patterns = score_data.get("recent_patterns", [])
 
-        # 第一層: 總分過濾
+        # 提取近期形態名稱
+        pattern_names = [p.get("name", "") for p in recent_patterns[:3]] if recent_patterns else []
+
+        # K 線形態輔助判斷
+        pattern_bullish = pattern_norm >= 65  # 多頭形態
+        pattern_bearish = pattern_norm <= 35   # 空頭形態
+
+        # 第一層: 總分過濾 + 形態確認
         if total >= 75:
-            level = "strong"
-            action = "strong_buy"
-            reason = f"綜合評分 {total} 分，各項指標強勁"
+            if pattern_bullish:
+                level = "strong"
+                action = "strong_buy"
+                pattern_hint = f"，形態訊號：{', '.join(pattern_names)}" if pattern_names else ""
+                reason = f"綜合評分 {total} 分，各項指標強勁{pattern_hint}"
+            elif pattern_bearish:
+                level = "watch"
+                action = "caution"
+                reason = f"綜合評分 {total} 分但出現空頭形態({', '.join(pattern_names)})，建議謹慎"
+            else:
+                level = "strong"
+                action = "buy"
+                reason = f"綜合評分 {total} 分，各項指標強勁"
         elif total >= 60:
-            level = "strong"
-            action = "buy"
-            reason = f"綜合評分 {total} 分，具備投資價值"
-        elif total <= 25:
-            level = "sell"
-            action = "strong_sell"
-            reason = f"綜合評分 {total} 分，風險過高"
-        elif total <= 40:
-            level = "sell"
-            action = "sell"
-            reason = f"綜合評分 {total} 分，建議避開"
-        else:
-            # 第二層: 觀察區間，檢查個別維度
-            if tech >= 70 and chip >= 70:
+            if pattern_bullish:
+                level = "strong"
+                action = "buy"
+                pattern_hint = f"，形態訊號：{', '.join(pattern_names)}" if pattern_names else ""
+                reason = f"綜合評分 {total} 分，具備投資價值{pattern_hint}"
+            elif pattern_bearish:
                 level = "watch"
                 action = "watch"
-                reason = f"技術與籌碼強勁，等待進場時機"
+                reason = f"綜合評分 {total} 分但形態偏弱，建議觀望"
+            else:
+                level = "strong"
+                action = "buy"
+                reason = f"綜合評分 {total} 分，具備投資價值"
+        elif total <= 25:
+            if pattern_bearish:
+                level = "sell"
+                action = "strong_sell"
+                pattern_hint = f"，形態訊號：{', '.join(pattern_names)}" if pattern_names else ""
+                reason = f"綜合評分 {total} 分，風險過高{pattern_hint}"
+            elif pattern_bullish:
+                level = "watch"
+                action = "watch"
+                reason = f"綜合評分 {total} 分但出現多頭形態，可能為超賣反彈"
+            else:
+                level = "sell"
+                action = "strong_sell"
+                reason = f"綜合評分 {total} 分，風險過高"
+        elif total <= 40:
+            if pattern_bearish:
+                level = "sell"
+                action = "sell"
+                reason = f"綜合評分 {total} 分，建議避開"
+            elif pattern_bullish:
+                level = "watch"
+                action = "watch"
+                reason = f"綜合評分 {total} 分但出現多頭形態({', '.join(pattern_names)})，可觀察"
+            else:
+                level = "sell"
+                action = "sell"
+                reason = f"綜合評分 {total} 分，建議避開"
+        else:
+            # 第二層: 觀察區間 (40 < total < 60)，檢查個別維度 + 形態
+            if tech >= 70 and chip >= 70:
+                if pattern_bullish:
+                    level = "strong"
+                    action = "buy"
+                    reason = f"技術與籌碼強勁，形態確認多頭({', '.join(pattern_names)})"
+                else:
+                    level = "watch"
+                    action = "watch"
+                    reason = f"技術與籌碼強勁，等待進場時機"
+            elif tech >= 60 and pattern_bullish:
+                level = "watch"
+                action = "watch"
+                reason = f"技術面尚可且形態多頭({', '.join(pattern_names)})，可觀察"
+            elif sentiment <= 30 and pattern_bearish:
+                level = "sell"
+                action = "sell"
+                reason = f"情緒面偏弱且形態空頭，建議避開"
             elif sentiment <= 30:
                 level = "watch"
                 action = "caution"
                 reason = f"情緒面偏弱，建議觀望"
             else:
                 return None  # 沒有明確訊號
+
+        operation = self._build_operation_guide(score_data)
 
         return {
             "stock_code": stock_code,
@@ -285,8 +416,42 @@ class ScoringService:
                 "chip": chip,
                 "sentiment": sentiment,
                 "fundamental": fundamental,
+                "pattern": round(pattern_norm, 1),
             },
+            "patterns": pattern_names,
+            "operation": operation,
             "generated_at": datetime.now().isoformat(),
+        }
+
+    def _build_operation_guide(self, score_data: dict) -> Optional[dict]:
+        """根據 ATR 與壓力位產生操作建議"""
+        current_price = score_data.get("current_price")
+        atr = score_data.get("atr_14")
+        resistance = score_data.get("resistance")
+        support = score_data.get("support")
+
+        if not current_price or not atr or atr <= 0:
+            return None
+
+        stop_loss = round(current_price - 1.5 * atr, 1)
+        # 目標：近期壓力位（若高於現價）或 +5%
+        if resistance and resistance > current_price * 1.005:
+            target = round(resistance, 1)
+        else:
+            target = round(current_price * 1.05, 1)
+
+        risk = current_price - stop_loss
+        reward = target - current_price
+        rr_ratio = round(reward / risk, 1) if risk > 0 else 0
+
+        return {
+            "entry_note": f"參考進場區間 {round(current_price * 0.998, 1)}–{round(current_price * 1.002, 1)}",
+            "stop_loss": stop_loss,
+            "stop_loss_pct": round((stop_loss - current_price) / current_price * 100, 1),
+            "target": target,
+            "target_pct": round((target - current_price) / current_price * 100, 1),
+            "rr_ratio": rr_ratio,
+            "hold_period": "波段（2–4 週）",
         }
 
     async def get_recommendations(self, min_score: int = 70, limit: int = 10) -> list[dict]:

@@ -38,9 +38,21 @@ async def get_db():
 
 
 async def init_db():
-    """初始化資料庫 - 建立所有資料表"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """
+    初始化資料庫
+
+    開發環境：create_all 自動建表（方便快速迭代）
+    生產環境：schema 由 Alembic 管理（部署時執行 `alembic upgrade head`），
+              這裡只驗證連線可用，不動 schema。
+    """
+    if settings.ENV == "development":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        # 僅驗證連線
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
 
 
 async def close_db():

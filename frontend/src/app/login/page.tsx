@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, TrendingUp } from "lucide-react";
 import { api } from "@/lib/api";
+import HeroChart from "@/components/HeroChart";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,27 +21,56 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await api.post("/api/auth/login", { username, password });
-      localStorage.setItem("token", response.data.access_token);
+      // Token 由後端透過 HttpOnly Cookie 下發，前端只記錄 username 供 UI 顯示
+      await api.post("/api/auth/login", { username, password });
       localStorage.setItem("username", username);
       router.push("/");
     } catch (err: any) {
-      setError(err.response?.data?.detail || "登入失敗，請檢查帳號密碼");
+      if (err.response?.status === 429) {
+        setError("嘗試次數過多，請稍後再試");
+      } else {
+        setError(err.response?.data?.detail || "登入失敗，請檢查帳號密碼");
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Stock Analyzer</h1>
-          <p className="text-gray-600 mt-2">台灣股票智能分析平台</p>
+    <div className="min-h-[calc(100vh-3.5rem)] grid grid-cols-1 lg:grid-cols-2">
+      {/* 左欄：深色品牌面（真實年線署名圖） */}
+      <div className="hidden lg:flex flex-col justify-between bg-slate-900 border-r border-slate-800 p-12">
+        <div>
+          <div className="flex items-center gap-2.5 mb-12">
+            <div className="w-7 h-7 bg-indigo-600 rounded-md flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-white" strokeWidth={2.5} />
+            </div>
+            <span className="text-base font-bold text-white tracking-tight">StockVision</span>
+          </div>
+          <div className="text-[11px] font-semibold tracking-[0.08em] uppercase text-indigo-400 mb-3">
+            台股多因子分析平台
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight leading-snug mb-4">
+            登入後解鎖
+            <br />
+            持倉健診與模擬交易。
+          </h1>
+          <ul className="text-[13px] text-slate-400 space-y-2">
+            <li>・追蹤清單即時評分</li>
+            <li>・持倉損益與健康診斷</li>
+            <li>・模擬單勝率與盈虧比統計</li>
+          </ul>
         </div>
+        <div>
+          <HeroChart />
+        </div>
+      </div>
 
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">登入</h2>
+      {/* 右欄：登入表單 */}
+      <div className="flex items-center justify-center px-4 py-12 bg-background">
+        <div className="w-full max-w-sm">
+          <h2 className="text-xl font-bold text-slate-900 mb-1.5">登入</h2>
+          <p className="text-[13px] text-slate-500 mb-7">使用你的帳號繼續</p>
 
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
@@ -91,7 +121,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -106,7 +136,7 @@ export default function LoginPage() {
 
           <div className="mt-6 text-center text-sm text-gray-600">
             還沒有帳號？{" "}
-            <Link href="/register" className="text-blue-600 hover:text-blue-700 font-medium">
+            <Link href="/register" className="text-indigo-600 hover:text-indigo-500 font-medium">
               立即註冊
             </Link>
           </div>

@@ -169,3 +169,29 @@ export function useSignals(stockCode?: string, level: string = "all") {
     },
   });
 }
+
+// 追蹤清單 API
+export function useWatchlist() {
+  return useQuery<Array<{ id: string; stock_code: string; note: string | null; added_at: string }>>({
+    queryKey: ["watchlist"],
+    queryFn: async () => {
+      const { data } = await api.get("/api/watchlist/");
+      return data;
+    },
+    retry: false,
+  });
+}
+
+// 評分歷史 API
+export function useScoreHistory(code: string, days: number = 30) {
+  return useQuery<Array<{ trade_date: string; total_score: number; technical_score: number; chip_score: number; fundamental_score: number; sentiment_score: number }>>({
+    queryKey: ["score-history", code, days],
+    queryFn: async () => {
+      const { data } = await api.get(`/api/decision/score-history/${code}`, {
+        params: { days },
+      });
+      return data;
+    },
+    enabled: !!code,
+  });
+}

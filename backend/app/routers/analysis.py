@@ -60,6 +60,68 @@ async def get_chip_analysis(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/news/global")
+async def get_global_news(
+    limit: int = Query(10, ge=1, le=30),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    全球局勢早報新聞 + 情緒預警
+
+    來源：sentiment_data 中 stock_code=NULL 的大盤/全球新聞（每小時排程更新）。
+    無資料時即時抓取一次。
+    預警規則：|情緒分數| >= 0.5 的新聞升級為預警項目。
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, desc
+    from app.models.analysis import SentimentData
+
+    async def _fetch_rows():
+        stmt = (
+            select(SentimentData)
+            .where(
+                SentimentData.stock_code.is_(None),
+                SentimentData.time >= datetime.now() - timedelta(days=3),
+            )
+            .order_by(desc(SentimentData.time))
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    rows = await _fetch_rows()
+    if not rows:
+        try:
+            from worker.crawler_worker import fetch_and_analyze_global
+            await fetch_and_analyze_global()
+            rows = await _fetch_rows()
+        except Exception:
+            pass
+
+    news = []
+    alerts = []
+    for i, r in enumerate(rows):
+        score = float(r.sentiment_score or 0)
+        sentiment = "positive" if score > 0.1 else "negative" if score < -0.1 else "neutral"
+        news.append({
+            "id": str(i),
+            "title": r.raw_text,
+            "source": (r.source or "").replace("全球·", ""),
+            "timestamp": r.time.isoformat() if r.time else None,
+            "sentiment": sentiment,
+        })
+        if abs(score) >= 0.5:
+            alerts.append({
+                "id": f"alert-{i}",
+                "level": "success" if score > 0 else "warning",
+                "title": ("利多" if score > 0 else "利空") + f"訊號（強度 {abs(score):.1f}）",
+                "description": (r.raw_text or "")[:60] + (f"｜{r.llm_summary}" if r.llm_summary else ""),
+                "timestamp": r.time.isoformat() if r.time else None,
+            })
+
+    return {"news": news, "alerts": alerts[:5]}
+
+
 @router.get("/sentiment/{stock_code}")
 async def get_sentiment_analysis(
     stock_code: str,

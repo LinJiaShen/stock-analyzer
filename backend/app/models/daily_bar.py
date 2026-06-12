@@ -3,7 +3,7 @@ K 線數據模型 (TimescaleDB Hypertable)
 """
 from datetime import date
 
-from sqlalchemy import Column, Integer, Numeric, Date, ForeignKey, String
+from sqlalchemy import Column, Integer, Numeric, Date, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -31,8 +31,7 @@ class DailyBar(Base):
     stock = relationship("Stock", backref="daily_bars")
 
     __table_args__ = (
-        # Unique constraint on (stock_code, trade_date)
-        {"unique_constraints": []},
+        UniqueConstraint("stock_code", "trade_date", name="uq_daily_bars_code_date"),
     )
 
     def __repr__(self):

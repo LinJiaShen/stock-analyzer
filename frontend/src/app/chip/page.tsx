@@ -1,61 +1,112 @@
 "use client";
 
-import { Search, BarChart3 } from "lucide-react";
-import { useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { Search, BarChart3, TrendingUp, TrendingDown, AlertTriangle, Info } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, Line, AreaChart, Area } from "recharts";
+import api from "@/lib/api";
+
+interface ChipDataPoint {
+  date: string;
+  foreign_net: number | null;
+  trust_net: number | null;
+  proprietary_net: number | null;
+  margin_balance: number | null;
+  margin_net: number | null;
+}
+
+interface DealerFlow {
+  foreign_net_buy: number;
+  invest_trust_net_buy: number;
+  proprietary_net_buy: number;
+  foreign_consecutive_days: number;
+  invest_trust_consecutive_days: number;
+  trend: string;
+  signal: string;
+}
+
+interface MarginTrading {
+  margin_balance: number;
+  margin_net_buy: number;
+  margin_trend: string;
+  signal: string;
+}
+
+interface Concentration {
+  concentration_ratio: number;
+  large_holder_trend: string;
+  retail_ratio: number;
+  signal: string;
+}
+
+interface ChipAnalysisResult {
+  stock_code: string;
+  score: number;
+  signal: string;
+  dealer_flow: DealerFlow;
+  margin_trading: MarginTrading;
+  concentration: Concentration;
+  analyzed_at: string;
+}
 
 export default function ChipPage() {
   const [searchCode, setSearchCode] = useState("2330");
   const [selectedCode, setSelectedCode] = useState("2330");
+  const [stockName, setStockName] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [chipData, setChipData] = useState<ChipDataPoint[]>([]);
+  const [chipResult, setChipResult] = useState<ChipAnalysisResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // 模擬法人買賣超數據
-  const legalData = [
-    { date: "01/09", foreign: 5000, invest_trust: -2000, proprietary: 1000 },
-    { date: "01/10", foreign: 3500, invest_trust: 1500, proprietary: -500 },
-    { date: "01/13", foreign: 8000, invest_trust: -1000, proprietary: 2000 },
-    { date: "01/14", foreign: 4500, invest_trust: 2500, proprietary: -1500 },
-    { date: "01/15", foreign: 6000, invest_trust: 3000, proprietary: 500 },
-  ];
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
 
-  // 模擬融資融券數據
-  const marginData = [
-    { date: "01/09", margin: 12500, short: 3200 },
-    { date: "01/10", margin: 12800, short: 3100 },
-    { date: "01/13", margin: 13200, short: 2900 },
-    { date: "01/14", margin: 13000, short: 2800 },
-    { date: "01/15", margin: 13500, short: 2700 },
-  ];
+      let rawData: ChipDataPoint[] = [];
 
-  // 模擬籌碼分析結果
-  const chipResult = {
-    score: 85,
-    signal: "買入",
-    dealer_flow: {
-      foreign_net_buy: 27000,
-      invest_trust_net_buy: 5000,
-      proprietary_net_buy: 1500,
-      foreign_consecutive_days: 5,
-      invest_trust_consecutive_days: 2,
-      trend: "外資連買",
-      signal: "正面",
-    },
-    margin_trading: {
-      margin_balance: 13500,
-      short_balance: 2700,
-      margin_net_buy: 1000,
-      short_net_sell: 500,
-      margin_ratio: 0.85,
-      margin_trend: "增加",
-      short_trend: "減少",
-      signal: "偏多",
-    },
-    concentration: {
-      concentration_ratio: 72.5,
-      large_holder_trend: "集中",
-      retail_ratio: 27.5,
-      signal: "正面",
-    },
-  };
+      try {
+        // 取得股票名稱
+        try {
+          const stockRes = await api.get(`/api/stocks/${selectedCode}`);
+          setStockName(stockRes.data?.name || selectedCode);
+        } catch {
+          setStockName(selectedCode);
+        }
+
+        // 取得籌碼原始數據
+        try {
+          const chipRes = await api.get(`/api/stocks/${selectedCode}/chip?days=30`);
+          rawData = chipRes.data?.data || [];
+          setChipData(
+            rawData.map((d) => ({
+              ...d,
+              date: new Date(d.date).toLocaleDateString("zh-TW", { month: "2-digit", day: "2-digit" }).replace(/\//g, "/"),
+            }))
+          );
+        } catch {
+          rawData = [];
+          setChipData([]);
+        }
+
+        // 取得籌碼分析結果
+        try {
+          const analysisRes = await api.get(`/api/analysis/chip/${selectedCode}?days=90`);
+          setChipResult(analysisRes.data);
+        } catch {
+          console.warn("無法取得籌碼分析結果，使用前端計算");
+          const fallbackResult = calculateFallbackResult(rawData);
+          setChipResult(fallbackResult);
+        }
+      } catch (err) {
+        console.error("籌碼數據載入失敗:", err);
+        setError("數據載入失敗，請稍後再試");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [selectedCode]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,10 +115,74 @@ export default function ChipPage() {
 
   const formatValue = (val: number) => {
     const sign = val >= 0 ? "+" : "";
-    const unit = Math.abs(val) >= 10000 ? "百萬" : "萬";
-    const num = unit === "百萬" ? (val / 10000).toFixed(1) : val.toFixed(0);
-    return `${sign}${num}${unit}`;
+    const absVal = Math.abs(val);
+    if (absVal >= 100000000) {
+      return `${sign}${(val / 100000000).toFixed(1)}億`;
+    } else if (absVal >= 10000) {
+      return `${sign}${(val / 10000).toFixed(1)}萬`;
+    }
+    return `${sign}${val.toFixed(0)}`;
   };
+
+  const formatMoney = (val: number | null) => {
+    if (val === null) return "-";
+    return formatValue(val);
+  };
+
+  const signalColor = (signal: string) => {
+    if (signal === "bullish" || signal === "buy" || signal === "strong_buy") return "text-green-600 bg-green-50";
+    if (signal === "bearish" || signal === "sell" || signal === "strong_sell") return "text-red-600 bg-red-50";
+    return "text-gray-600 bg-gray-50";
+  };
+
+  const signalText = (signal: string) => {
+    const map: Record<string, string> = {
+      bullish: "正面",
+      bearish: "負面",
+      neutral: "中性",
+      buy: "買入",
+      strong_buy: "強烈買入",
+      sell: "賣出",
+      strong_sell: "強烈賣出",
+    };
+    return map[signal] || signal;
+  };
+
+  const trendText = (trend: string) => {
+    const map: Record<string, string> = {
+      strong_buy: "強勁買超",
+      buy: "買超",
+      neutral: "持平",
+      sell: "賣超",
+      strong_sell: "強勁賣超",
+      increasing: "增加",
+      decreasing: "減少",
+      accumulating: "集中",
+      distributing: "分散",
+      stable: "穩定",
+    };
+    return map[trend] || trend;
+  };
+
+  const largeHolderTrendText = (trend: string) => {
+    const map: Record<string, string> = {
+      accumulating: "大戶集中",
+      distributing: "大戶分散",
+      stable: "持平",
+    };
+    return map[trend] || trend;
+  };
+
+  // 計算近 5 日加總
+  const recent5Summary = useMemo(() => {
+    if (chipData.length === 0) return null;
+    const recent = chipData.slice(-5);
+    return {
+      foreign: recent.reduce((sum, d) => sum + (d.foreign_net || 0), 0),
+      trust: recent.reduce((sum, d) => sum + (d.trust_net || 0), 0),
+      proprietary: recent.reduce((sum, d) => sum + (d.proprietary_net || 0), 0),
+    };
+  }, [chipData]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -102,130 +217,439 @@ export default function ChipPage() {
         </form>
       </div>
 
-      {/* 評分摘要 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">{selectedCode}</h2>
-            <p className="text-sm text-gray-500">籌碼面綜合分析</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-3xl font-bold text-green-600">{chipResult.score}</div>
-              <div className="text-xs text-gray-500">綜合評分</div>
-            </div>
-            <div className="px-3 py-1.5 rounded-full text-sm font-medium bg-green-100 text-green-700">
-              {chipResult.signal}
-            </div>
-          </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-2 text-red-700">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
         </div>
+      )}
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <div className="text-xs text-gray-500 mb-1">外資買賣超</div>
-            <div className="text-sm font-semibold text-green-600">
-              {formatValue(chipResult.dealer_flow.foreign_net_buy)}
+      {/* 籌碼決策分析 - 主要段落 */}
+      {chipResult && (
+        <div className="bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 rounded-xl border border-green-200 shadow-sm p-6 mb-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                <BarChart3 className="w-6 h-6 text-green-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">
+                  {stockName || selectedCode} ({selectedCode}) - 籌碼面分析
+                </h2>
+                <p className="text-sm text-gray-500">綜合法人動向、融資融券、籌碼集中度</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <div className="text-4xl font-bold text-green-600">{chipResult.score}</div>
+                <div className="text-xs text-gray-500">綜合評分</div>
+              </div>
+              <div className={`px-4 py-2 rounded-full text-base font-bold ${signalColor(chipResult.signal)}`}>
+                {signalText(chipResult.signal)}
+              </div>
             </div>
           </div>
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <div className="text-xs text-gray-500 mb-1">外資連買</div>
-            <div className="text-sm font-semibold text-gray-900">
-              {chipResult.dealer_flow.foreign_consecutive_days} 天
-            </div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <div className="text-xs text-gray-500 mb-1">籌碼集中度</div>
-            <div className="text-sm font-semibold text-gray-900">
-              {chipResult.concentration.concentration_ratio}%
-            </div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <div className="text-xs text-gray-500 mb-1">融資趨勢</div>
-            <div className="text-sm font-semibold text-gray-900">{chipResult.margin_trading.margin_trend}</div>
-          </div>
-        </div>
-      </div>
 
-      {/* 三大法人買賣超 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">三大法人買賣超 (近 5 日)</h3>
-        <div className="h-64 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <BarChart data={legalData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
-              <YAxis stroke="#94a3b8" fontSize={12} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "white",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                }}
-                formatter={(value) => formatValue(Number(value))}
-              />
-              <Legend />
-              <Bar dataKey="foreign" name="外資" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="invest_trust" name="投信" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="proprietary" name="自營商" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+          {/* 策略卡片 */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            {/* 法人動向 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">法人動向</div>
+              <div className="text-2xl font-bold text-green-600 mb-1">
+                {formatValue(chipResult.dealer_flow.foreign_net_buy)}
+              </div>
+              <div className="text-xs text-gray-500">外資淨買超</div>
+              <div className={`mt-2 px-2 py-1 rounded text-xs font-medium ${signalColor(chipResult.dealer_flow.signal)}`}>
+                {signalText(chipResult.dealer_flow.signal)}
+              </div>
+            </div>
 
-      {/* 融資融券 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">融資融券餘額</h3>
-        <div className="h-64 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <BarChart data={marginData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
-              <YAxis stroke="#94a3b8" fontSize={12} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "white",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                }}
-                formatter={(value) => `${Number(value).toLocaleString()} 萬`}
-              />
-              <Legend />
-              <Bar dataKey="margin" name="融資餘額" fill="#ef4444" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="short" name="融券餘額" fill="#22c55e" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+            {/* 外資連買 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">外資連買</div>
+              <div className="text-2xl font-bold text-blue-600 mb-1">
+                {Math.abs(chipResult.dealer_flow.foreign_consecutive_days)}
+              </div>
+              <div className="text-xs text-gray-500">天</div>
+              <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-blue-50 text-blue-700">
+                {chipResult.dealer_flow.foreign_consecutive_days > 0 ? "連續買超" : "連續賣超"}
+              </div>
+            </div>
 
-      {/* 籌碼集中度 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">籌碼集中度分析</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-3xl font-bold text-blue-600 mb-1">
-              {chipResult.concentration.concentration_ratio}%
+            {/* 投信動向 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">投信動向</div>
+              <div className="text-2xl font-bold text-emerald-600 mb-1">
+                {formatValue(chipResult.dealer_flow.invest_trust_net_buy)}
+              </div>
+              <div className="text-xs text-gray-500">投信淨買超</div>
+              <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-emerald-50 text-emerald-700">
+                {chipResult.dealer_flow.invest_trust_consecutive_days > 0 ? "連買" : "連賣"}
+              </div>
             </div>
-            <div className="text-sm text-gray-500">集中度</div>
-            <div className="text-xs text-green-600 mt-1">{chipResult.concentration.large_holder_trend}</div>
+
+            {/* 融資趨勢 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">融資趨勢</div>
+              <div className="text-2xl font-bold text-orange-600 mb-1">
+                {formatValue(chipResult.margin_trading.margin_balance)}
+              </div>
+              <div className="text-xs text-gray-500">融資餘額</div>
+              <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-orange-50 text-orange-700">
+                {trendText(chipResult.margin_trading.margin_trend)}
+              </div>
+            </div>
+
+            {/* 籌碼集中度 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">籌碼集中度</div>
+              <div className="text-2xl font-bold text-purple-600 mb-1">
+                {(chipResult.concentration.concentration_ratio * 100).toFixed(0)}%
+              </div>
+              <div className="text-xs text-gray-500">大戶持倉比</div>
+              <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-purple-50 text-purple-700">
+                {largeHolderTrendText(chipResult.concentration.large_holder_trend)}
+              </div>
+            </div>
+
+            {/* 散戶比例 */}
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
+              <div className="text-xs text-gray-500 mb-2">散戶比例</div>
+              <div className="text-2xl font-bold text-red-600 mb-1">
+                {(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
+              </div>
+              <div className="text-xs text-gray-500">散戶持倉比</div>
+              <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-red-50 text-red-700">
+                {chipResult.concentration.retail_ratio > 0.4 ? "偏高" : "正常"}
+              </div>
+            </div>
           </div>
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-3xl font-bold text-orange-600 mb-1">
-              {chipResult.concentration.retail_ratio}%
+
+          {/* 綜合操作建議 */}
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-green-100">
+            <h3 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Info className="w-5 h-5 text-green-600" />
+              綜合籌碼操作建議
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 bg-green-50 rounded-lg">
+                <div className="text-sm font-medium text-green-700 mb-2">籌碼評分解讀</div>
+                <div className="text-sm text-gray-700">
+                  {chipResult.score >= 70
+                    ? "籌碼面偏多，法人買超明顯，建議可逢低佈局"
+                    : chipResult.score >= 50
+                    ? "籌碼面中性，法人動向不明顯，建議觀望"
+                    : "籌碼面偏空，法人賣超明顯，建議謹慎操作"}
+                </div>
+              </div>
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <div className="text-sm font-medium text-blue-700 mb-2">法人動向參考</div>
+                <div className="text-sm text-gray-700">
+                  外資{chipResult.dealer_flow.foreign_consecutive_days > 0 ? "連買" : "連賣"}
+                  {Math.abs(chipResult.dealer_flow.foreign_consecutive_days)}天，
+                  投信{chipResult.dealer_flow.invest_trust_consecutive_days > 0 ? "連買" : "連賣"}
+                  {Math.abs(chipResult.dealer_flow.invest_trust_consecutive_days)}天，
+                  {trendText(chipResult.dealer_flow.trend)}
+                </div>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <div className="text-sm font-medium text-purple-700 mb-2">籌碼集中度參考</div>
+                <div className="text-sm text-gray-700">
+                  大戶{largeHolderTrendText(chipResult.concentration.large_holder_trend)}，
+                  散戶比例{(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
+                  {chipResult.concentration.retail_ratio > 0.4 ? "，注意散戶追高風險" : "，籌碼結構健康"}
+                </div>
+              </div>
             </div>
-            <div className="text-sm text-gray-500">散戶比例</div>
-            <div className="text-xs text-gray-500 mt-1">持倉分散度</div>
-          </div>
-          <div className="text-center p-4 bg-gray-50 rounded-lg">
-            <div className="text-3xl font-bold text-green-600 mb-1">
-              {chipResult.dealer_flow.foreign_consecutive_days}
-            </div>
-            <div className="text-sm text-gray-500">外資連買天數</div>
-            <div className="text-xs text-green-600 mt-1">{chipResult.dealer_flow.trend}</div>
           </div>
         </div>
-      </div>
+      )}
+
+      {loading && !chipResult ? (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-6 bg-gray-200 rounded w-1/4"></div>
+            <div className="h-40 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* 三大法人買賣超 */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-900">三大法人買賣超 (近 30 日)</h3>
+              {recent5Summary && (
+                <div className="flex gap-4 text-sm">
+                  <span className="text-blue-600">外資 5 日: {formatMoney(recent5Summary.foreign)}</span>
+                  <span className="text-green-600">投信 5 日: {formatMoney(recent5Summary.trust)}</span>
+                  <span className="text-yellow-600">自營 5 日: {formatMoney(recent5Summary.proprietary)}</span>
+                </div>
+              )}
+            </div>
+            <div className="h-64 min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                <BarChart data={chipData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
+                  <YAxis
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickFormatter={(value) => formatValue(value)}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "white",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                    }}
+                    formatter={(value, name) => [
+                      formatMoney(Number(value)),
+                      name === "foreign_net" ? "外資" : name === "trust_net" ? "投信" : "自營商",
+                    ]}
+                  />
+                  <Legend />
+                  <Bar dataKey="foreign_net" name="外資" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="trust_net" name="投信" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="proprietary_net" name="自營商" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 融資融券 */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">融資餘額趨勢</h3>
+            <div className="h-64 min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                <AreaChart data={chipData}>
+                  <defs>
+                    <linearGradient id="colorMargin" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
+                  <YAxis
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickFormatter={(value) => `${(value / 10000).toFixed(0)}萬`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "white",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                    }}
+                    formatter={(value) => [`${Number(value).toLocaleString()} 張`, "融資餘額"]}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="margin_balance"
+                    name="融資餘額"
+                    stroke="#ef4444"
+                    fill="url(#colorMargin)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 籌碼集中度 */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">籌碼集中度分析</h3>
+            {chipResult ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-3xl font-bold text-blue-600 mb-1">
+                    {(chipResult.concentration.concentration_ratio * 100).toFixed(0)}%
+                  </div>
+                  <div className="text-sm text-gray-500">大戶集中度</div>
+                  <div className="text-xs text-green-600 mt-1">
+                    {largeHolderTrendText(chipResult.concentration.large_holder_trend)}
+                  </div>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-3xl font-bold text-orange-600 mb-1">
+                    {(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
+                  </div>
+                  <div className="text-sm text-gray-500">散戶比例</div>
+                  <div className="text-xs text-gray-500 mt-1">持倉分散度</div>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className="text-3xl font-bold text-green-600 mb-1">
+                    {Math.abs(chipResult.dealer_flow.foreign_consecutive_days)}
+                  </div>
+                  <div className="text-sm text-gray-500">外資連續天數</div>
+                  <div className="text-xs text-green-600 mt-1">
+                    {chipResult.dealer_flow.foreign_consecutive_days > 0 ? "連買" : "連賣"}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 py-8">
+                暫無籌碼集中度數據
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
+}
+
+// 前端 fallback 計算（從真實原始數據推算，非隨機）
+function calculateFallbackResult(data: ChipDataPoint[]): ChipAnalysisResult {
+  if (data.length === 0) {
+    return {
+      stock_code: "",
+      score: 50,
+      signal: "neutral",
+      dealer_flow: {
+        foreign_net_buy: 0,
+        invest_trust_net_buy: 0,
+        proprietary_net_buy: 0,
+        foreign_consecutive_days: 0,
+        invest_trust_consecutive_days: 0,
+        trend: "neutral",
+        signal: "neutral",
+      },
+      margin_trading: {
+        margin_balance: 0,
+        margin_net_buy: 0,
+        margin_trend: "neutral",
+        signal: "neutral",
+      },
+      concentration: {
+        concentration_ratio: 1,
+        large_holder_trend: "stable",
+        retail_ratio: 0.5,
+        signal: "neutral",
+      },
+      analyzed_at: new Date().toISOString(),
+    };
+  }
+
+  // 法人動向
+  const foreignNet = data.reduce((sum, d) => sum + (d.foreign_net || 0), 0);
+  const trustNet = data.reduce((sum, d) => sum + (d.trust_net || 0), 0);
+  const proprietaryNet = data.reduce((sum, d) => sum + (d.proprietary_net || 0), 0);
+
+  let foreignConsecutive = 0;
+  for (const d of data) {
+    if (d.foreign_net && d.foreign_net > 0) foreignConsecutive++;
+    else if (d.foreign_net && d.foreign_net < 0) foreignConsecutive--;
+    else break;
+  }
+
+  let trustConsecutive = 0;
+  for (const d of data) {
+    if (d.trust_net && d.trust_net > 0) trustConsecutive++;
+    else if (d.trust_net && d.trust_net < 0) trustConsecutive--;
+    else break;
+  }
+
+  let dealerTrend = "neutral";
+  let dealerSignal = "neutral";
+  if (foreignNet > 100000000 && trustNet > 50000000) {
+    dealerTrend = "strong_buy";
+    dealerSignal = "bullish";
+  } else if (foreignNet > 50000000) {
+    dealerTrend = "buy";
+    dealerSignal = "bullish";
+  } else if (foreignNet < -100000000 && trustNet < -50000000) {
+    dealerTrend = "strong_sell";
+    dealerSignal = "bearish";
+  } else if (foreignNet < -50000000) {
+    dealerTrend = "sell";
+    dealerSignal = "bearish";
+  }
+
+  // 融資趨勢
+  const latest = data[data.length - 1];
+  const marginBalance = latest?.margin_balance || 0;
+
+  let marginTrend = "neutral";
+  let marginSignal = "neutral";
+  if (data.length >= 10) {
+    const recent5 = data.slice(-5);
+    const old5 = data.slice(-10, -5);
+    const recentAvg = recent5.reduce((s, d) => s + (d.margin_balance || 0), 0) / 5;
+    const oldAvg = old5.reduce((s, d) => s + (d.margin_balance || 0), 0) / 5;
+    marginTrend = recentAvg > oldAvg ? "increasing" : "decreasing";
+    marginSignal = marginTrend === "increasing" ? "bearish" : "neutral";
+  }
+
+  // 籌碼集中度
+  let concentrationRatio = 1.0;
+  let largeHolderTrend = "stable";
+  let concentrationSignal = "neutral";
+
+  if (data.length >= 20) {
+    const recentInstitutional = data.slice(-10).reduce(
+      (s, d) => s + (d.foreign_net || 0) + (d.trust_net || 0),
+      0
+    );
+    const olderInstitutional = data.slice(-20, -10).reduce(
+      (s, d) => s + (d.foreign_net || 0) + (d.trust_net || 0),
+      0
+    );
+
+    if (recentInstitutional > 0 && recentInstitutional > olderInstitutional) {
+      largeHolderTrend = "accumulating";
+      concentrationSignal = "bullish";
+      concentrationRatio = 1.3;
+    } else if (recentInstitutional < 0) {
+      largeHolderTrend = "distributing";
+      concentrationSignal = "bearish";
+      concentrationRatio = 0.7;
+    }
+  }
+
+  // 評分
+  let score = 50;
+  if (dealerSignal === "bullish") score += 15;
+  else if (dealerSignal === "bearish") score -= 15;
+  if (marginSignal === "bullish") score += 10;
+  else if (marginSignal === "bearish") score -= 10;
+  if (concentrationSignal === "bullish") score += 10;
+  else if (concentrationSignal === "bearish") score -= 10;
+  score = Math.max(0, Math.min(100, score));
+
+  let overallSignal = "neutral";
+  if (score >= 70) overallSignal = "strong_buy";
+  else if (score >= 60) overallSignal = "buy";
+  else if (score >= 40) overallSignal = "neutral";
+  else if (score >= 30) overallSignal = "sell";
+  else overallSignal = "strong_sell";
+
+  return {
+    stock_code: "",
+    score,
+    signal: overallSignal,
+    dealer_flow: {
+      foreign_net_buy: foreignNet,
+      invest_trust_net_buy: trustNet,
+      proprietary_net_buy: proprietaryNet,
+      foreign_consecutive_days: foreignConsecutive,
+      invest_trust_consecutive_days: trustConsecutive,
+      trend: dealerTrend,
+      signal: dealerSignal,
+    },
+    margin_trading: {
+      margin_balance: marginBalance,
+      margin_net_buy: latest?.margin_net || 0,
+      margin_trend: marginTrend,
+      signal: marginSignal,
+    },
+    concentration: {
+      concentration_ratio: concentrationRatio,
+      large_holder_trend: largeHolderTrend,
+      retail_ratio: 1 / (concentrationRatio + 1),
+      signal: concentrationSignal,
+    },
+    analyzed_at: new Date().toISOString(),
+  };
 }

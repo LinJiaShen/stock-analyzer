@@ -68,183 +68,150 @@ class StockListWorker:
             )
         return self._session
 
+    @staticmethod
+    def _classify_type(code: str) -> str:
+        """依代碼規則分類：00 開頭=ETF/債券ETF，其餘 4 碼數字=個股"""
+        if code.startswith("00"):
+            return "etf"
+        return "stock"
+
     async def fetch_twse_stocks(self) -> list[dict]:
         """
-        從 TWSE 抓取上市股票列表
+        從 TWSE OpenAPI 抓取上市股票列表（含 ETF）
 
-        Returns:
-            股票資料列表
+        資料來源：STOCK_DAY_ALL（每日全市場行情，含代碼與名稱）
         """
-        logger.info("正在從 TWSE 抓取上市股票列表...")
+        logger.info("正在從 TWSE OpenAPI 抓取上市股票列表...")
         stocks = []
 
-        # TWSE 提供 JSON API
-        url = "https://www.twse.com.tw/rwd/zh/exchangeMarket/stockQuery"
-        params = {
-            "response": "json",
-            "date": date.today().isoformat(),
-            "step": 1000,  # 一次抓 1000 筆
-            "offset": 0,
-        }
-
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         client = await self._get_session()
-        offset = 0
-        total = None
 
-        while True:
-            params["offset"] = offset
-            try:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            items = response.json()
 
-                meta = data.get("meta", {})
-                if meta.get("error"):
-                    logger.error(f"TWSE API 錯誤: {meta['error']}")
-                    break
-
-                items = data.get("outputs", [])
-                if not items:
-                    break
-
-                for item in items:
-                    stocks.append({
-                        "code": item.get("SECURITY_CODE", ""),
-                        "name": item.get("SECURITY_NAME_ABBR", ""),
-                        "market": "twse",
-                        "type": "stock",
-                    })
-
-                total = data.get("total", 0)
-                offset += 1000
-
-                if total and offset >= total:
-                    break
-
-                await asyncio.sleep(0.5)  # 速率限制
-
-            except Exception as e:
-                logger.error(f"TWSE 抓取失敗: {e}")
-                break
+            for item in items:
+                code = (item.get("Code") or "").strip()
+                name = (item.get("Name") or "").strip()
+                if not code or not name:
+                    continue
+                stocks.append({
+                    "code": code,
+                    "name": name,
+                    "market": "twse",
+                    "type": self._classify_type(code),
+                })
+        except Exception as e:
+            logger.error(f"TWSE OpenAPI 抓取失敗: {e}")
 
         logger.info(f"TWSE 上市股票抓取完成: {len(stocks)} 筆")
         return stocks
 
     async def fetch_tpex_stocks(self) -> list[dict]:
         """
-        從 TPEx 抓取上櫃股票列表
-
-        Returns:
-            股票資料列表
+        從 TPEx OpenAPI 抓取上櫃股票列表（含 ETF）
         """
-        logger.info("正在從 TPEx 抓取上櫃股票列表...")
+        logger.info("正在從 TPEx OpenAPI 抓取上櫃股票列表...")
         stocks = []
 
-        # TPEx 也提供 JSON API
-        url = "https://www.tpex.org.tw/web/stock/stock_query/query_result.php"
-        params = {
-            "type": "A",  # A=股票
-            "order": "market_no",
-            "order_type": "ASC",
-            "page": 1,
-            "per_page": 1000,
-        }
-
+        url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
         client = await self._get_session()
-        page = 1
-        total = None
 
-        while True:
-            params["page"] = page
-            try:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            items = response.json()
 
-                items = data.get("data", [])
-                if not items:
-                    break
-
-                for item in items:
-                    stocks.append({
-                        "code": item.get("market_no", ""),
-                        "name": item.get("stock_name", ""),
-                        "market": "tpex",
-                        "type": "stock",
-                    })
-
-                pagination = data.get("pagination", {})
-                total = pagination.get("total", 0)
-                page += 1
-
-                if total and (page - 1) * 1000 >= total:
-                    break
-
-                await asyncio.sleep(0.5)
-
-            except Exception as e:
-                logger.error(f"TPEx 抓取失敗: {e}")
-                break
+            for item in items:
+                code = (item.get("SecuritiesCompanyCode") or "").strip()
+                name = (item.get("CompanyName") or "").strip()
+                if not code or not name:
+                    continue
+                stocks.append({
+                    "code": code,
+                    "name": name,
+                    "market": "tpex",
+                    "type": self._classify_type(code),
+                })
+        except Exception as e:
+            logger.error(f"TPEx OpenAPI 抓取失敗: {e}")
 
         logger.info(f"TPEx 上櫃股票抓取完成: {len(stocks)} 筆")
         return stocks
 
     async def fetch_etf_list(self) -> list[dict]:
         """
-        從 TWSE + TPEx 抓取 ETF 列表
-
-        Returns:
-            ETF 資料列表
+        ETF 已包含在 TWSE/TPEx OpenAPI 結果中（00 開頭代碼自動分類為 etf），
+        此函式保留介面相容性，不再額外抓取。
         """
-        logger.info("正在抓取 ETF 列表...")
-        etfs = []
+        return []
 
-        # TWSE ETF
-        url = "https://www.twse.com.tw/rwd/zh/exchangeMarket/stockQuery"
-        params = {
-            "response": "json",
-            "date": date.today().isoformat(),
-            "step": 1000,
-            "offset": 0,
-            "marketI": "J",  # J=ETF
-        }
+    # TWSE 產業別代碼對照（上市/上櫃通用）
+    INDUSTRY_CODES = {
+        "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
+        "05": "電機機械", "06": "電器電纜", "08": "玻璃陶瓷", "09": "造紙工業",
+        "10": "鋼鐵工業", "11": "橡膠工業", "12": "汽車工業", "14": "建材營造",
+        "15": "航運業", "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨",
+        "19": "綜合", "20": "其他", "21": "化學工業", "22": "生技醫療",
+        "23": "油電燃氣", "24": "半導體", "25": "電腦及週邊設備", "26": "光電",
+        "27": "通信網路", "28": "電子零組件", "29": "電子通路", "30": "資訊服務",
+        "31": "其他電子", "32": "文化創意", "33": "農業科技", "34": "電子商務",
+        "35": "綠能環保", "36": "數位雲端", "37": "運動休閒", "38": "居家生活",
+    }
 
+    async def sync_industries(self) -> int:
+        """
+        從 TWSE/TPEx 公司基本資料 OpenAPI 同步產業別
+
+        Returns: 更新筆數
+        """
+        logger.info("正在同步產業別資料...")
         client = await self._get_session()
+        industry_map: dict[str, str] = {}
 
+        # 上市公司基本資料
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            items = data.get("outputs", [])
-            for item in items:
-                etfs.append({
-                    "code": item.get("SECURITY_CODE", ""),
-                    "name": item.get("SECURITY_NAME_ABBR", ""),
-                    "market": "twse",
-                    "type": "etf",
-                })
-
-            # TPEx ETF
-            params["marketI"] = "K"  # TPEx ETF
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            items = data.get("outputs", [])
-            for item in items:
-                etfs.append({
-                    "code": item.get("SECURITY_CODE", ""),
-                    "name": item.get("SECURITY_NAME_ABBR", ""),
-                    "market": "tpex",
-                    "type": "etf",
-                })
-
+            res = await client.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L")
+            res.raise_for_status()
+            for item in res.json():
+                code = (item.get("公司代號") or "").strip()
+                ind = (item.get("產業別") or "").strip()
+                if code and ind:
+                    industry_map[code] = ind
         except Exception as e:
-            logger.error(f"ETF 抓取失敗: {e}")
+            logger.warning(f"TWSE 公司基本資料抓取失敗: {e}")
 
-        logger.info(f"ETF 列表抓取完成: {len(etfs)} 筆")
-        return etfs
+        # 上櫃公司基本資料
+        try:
+            res = await client.get("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O")
+            res.raise_for_status()
+            for item in res.json():
+                code = (item.get("SecuritiesCompanyCode") or item.get("公司代號") or "").strip()
+                ind = (item.get("SecuritiesIndustryCode") or item.get("產業別") or "").strip()
+                if code and ind:
+                    industry_map[code] = ind
+        except Exception as e:
+            logger.warning(f"TPEx 公司基本資料抓取失敗: {e}")
+
+        if not industry_map:
+            return 0
+
+        updated = 0
+        async with async_session_factory() as session:
+            result = await session.execute(select(Stock))
+            for stock in result.scalars().all():
+                ind_code = industry_map.get(stock.code)
+                if ind_code:
+                    ind_name = self.INDUSTRY_CODES.get(ind_code.zfill(2), f"產業{ind_code}")
+                    stock.industry_code = ind_code
+                    stock.industry_name = ind_name
+                    updated += 1
+            await session.commit()
+
+        logger.info(f"產業別同步完成: {updated} 筆")
+        return updated
 
     async def sync_to_database(self, stocks: list[dict]) -> dict:
         """
@@ -339,5 +306,11 @@ async def sync_stock_list(category: str = "all"):
         all_stocks.extend(await stock_list_worker.fetch_etf_list())
 
     result = await stock_list_worker.sync_to_database(all_stocks)
+
+    # 同步產業別（公司基本資料）
+    try:
+        result["industries_updated"] = await stock_list_worker.sync_industries()
+    except Exception as e:
+        logger.warning(f"產業別同步失敗: {e}")
     logger.info(f"股票列表同步完成: {result}")
     return result

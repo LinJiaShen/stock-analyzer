@@ -120,6 +120,14 @@ export interface SentimentAnalysis {
     fear_greed_index: number;
     signal: string;
   };
+  news?: Array<{
+    title: string;
+    source: string;
+    time: string | null;
+    sentiment_score: number;
+    summary: string;
+  }>;
+  method?: string;
 }
 
 export interface IndustryAnalysis {
@@ -153,6 +161,16 @@ export interface IndustryAnalysis {
 }
 
 // 決策相關類型
+export interface OperationGuideData {
+  entry_note: string;
+  stop_loss: number;
+  stop_loss_pct: number;
+  target: number;
+  target_pct: number;
+  rr_ratio: number;
+  hold_period: string;
+}
+
 export interface ScoreData {
   stock_code: string;
   total_score: number;
@@ -162,6 +180,11 @@ export interface ScoreData {
   sentiment_score: number;
   health_level: string;
   weights: Record<string, number>;
+  current_price?: number | null;
+  atr_14?: number | null;
+  support?: number | null;
+  resistance?: number | null;
+  operation?: OperationGuideData | null;
 }
 
 export interface RadarData {
@@ -204,4 +227,27 @@ export interface LoginData {
 export interface TokenResponse {
   access_token: string;
   token_type: string;
+}
+
+// WebSocket 即時數據類型
+export interface CandleUpdate {
+  open_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  turnover: number;
+  minute_bar: boolean;
+  completed: boolean;
+}
+
+export interface WebSocketMessage {
+  type: "connected" | "candle_update" | "pong" | "subscribed" | "error";
+  stock_code?: string;
+  interval?: string;
+  market_open?: boolean;
+  message?: string;
+  data?: CandleUpdate;
+  timestamp?: string;
 }

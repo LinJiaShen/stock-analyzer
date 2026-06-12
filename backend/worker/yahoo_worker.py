@@ -1,6 +1,9 @@
 """
 Yahoo Finance 數據抓取 Worker
 使用 yfinance 套件處理認證、速率限制與重試
+
+台股日K線優先使用 Sinopac (shioaji)，失敗時 fallback 到 yfinance
+大盤指數（^TWII, ^GSPC, ^IXIC）及 ADR 仍使用 yfinance
 """
 import asyncio
 import logging
@@ -17,18 +20,37 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
-# 追蹤的 ADR 對應關係 (台灣股票 -> Yahoo 代碼)
+# 台股 → 美股 ADR 真實對應（NYSE/NASDAQ 掛牌）
 ADR_MAPPING = {
-    "2330": "2330.TW",
-    "2454": "2454.TW",
-    "2317": "2317.TW",
+    "2330": "TSM",    # 台積電 ADR
+    "2303": "UMC",    # 聯電 ADR
+    "3711": "ASX",    # 日月光投控 ADR
+    "2412": "CHT",    # 中華電信 ADR
 }
 
-# 大盤指數
+# ADR 顯示名稱
+ADR_NAMES = {
+    "TSM": "台積電 ADR",
+    "UMC": "聯電 ADR",
+    "ASX": "日月光 ADR",
+    "CHT": "中華電 ADR",
+}
+
+# 大盤指數（含影響台股的美股指數）
 INDEX_SYMBOLS = {
-    "TAIEX": "^TWII",
-    "SP500": "^GSPC",
-    "NASDAQ": "^IXIC",
+    "TAIEX": "^TWII",     # 加權指數
+    "SP500": "^GSPC",     # S&P 500
+    "NASDAQ": "^IXIC",    # 那斯達克
+    "DJI": "^DJI",        # 道瓊工業
+    "SOX": "^SOX",        # 費城半導體（台股電子權值高度連動）
+}
+
+INDEX_NAMES = {
+    "TAIEX": "加權指數",
+    "SP500": "S&P 500",
+    "NASDAQ": "那斯達克",
+    "DJI": "道瓊工業",
+    "SOX": "費城半導體",
 }
 
 # yfinance period 對應天數（用於 fetch_historical_kline 選 period）
@@ -127,9 +149,16 @@ class YahooWorker:
         """
         向後相容介面：回傳模擬 Yahoo v8 chart 結構
         讓 stocks.py router 無需改動
+        台股日K優先走 fetch_historical_kline（Sinopac→yfinance fallback）
         """
         yf_interval = {"1d": "1d", "1wk": "1wk", "1mo": "1mo"}.get(interval, interval)
-        klines = await self.fetch_kline_yf(symbol, period, yf_interval)
+
+        # 台股日K：Sinopac（預熱後快）→ fallback yfinance
+        if symbol.endswith(".TW") and yf_interval == "1d":
+            days = PERIOD_DAYS.get(period, 1095)
+            klines = await self.fetch_historical_kline(symbol, days)
+        else:
+            klines = await self.fetch_kline_yf(symbol, period, yf_interval)
 
         if not klines:
             return None
@@ -175,30 +204,61 @@ class YahooWorker:
             }
         }
 
-    async def fetch_adr_data(self, stock_code: str = None) -> dict | None:
-        """抓取 ADR 盤後數據"""
+    async def fetch_adr_data(self, stock_code: str = None, force: bool = False) -> dict | None:
+        """
+        抓取台股 ADR 美股報價
+
+        美股收盤時 yfinance 回傳最近收盤價（台灣時間昨夜美股收盤），
+        正是盤前戰情室需要的「隔夜 ADR 表現」。
+        結果快取 10 分鐘。force=True 跳過快取強制刷新。
+        """
+        if not force:
+            cached = await self.cache.get("adr:latest")
+            if cached and not stock_code:
+                return cached
+
         if stock_code:
-            symbols = [ADR_MAPPING.get(stock_code, f"{stock_code}.TW")]
+            adr_symbol = ADR_MAPPING.get(stock_code)
+            if not adr_symbol:
+                return {}
+            symbols = {stock_code: adr_symbol}
         else:
-            symbols = list(ADR_MAPPING.values())
+            symbols = dict(ADR_MAPPING)
 
         results = {}
-        for symbol in symbols:
+        for tw_code, symbol in symbols.items():
             meta = await self._run_sync(_yf_fast_info_sync, symbol)
             if meta.get("regularMarketPrice"):
                 results[symbol] = {
                     "symbol": symbol,
-                    "regular_market_price": meta.get("regularMarketPrice"),
-                    "regular_market_change": meta.get("regularMarketChange"),
-                    "regular_market_change_percent": meta.get("regularMarketChangePercent"),
-                    "regular_market_volume": meta.get("regularMarketVolume"),
+                    "name": ADR_NAMES.get(symbol, symbol),
+                    "tw_code": tw_code,
+                    "regular_market_price": round(meta.get("regularMarketPrice"), 2),
+                    "regular_market_change": round(meta.get("regularMarketChange") or 0, 2),
+                    "regular_market_change_percent": round(meta.get("regularMarketChangePercent") or 0, 2),
                     "currency": meta.get("currency"),
                     "market_state": meta.get("marketState"),
                 }
+
+        if not stock_code and results:
+            await self.cache.set("adr:latest", results, expire=600)
         return results
 
-    async def fetch_index_data(self) -> dict:
-        """抓取大盤指數數據"""
+    async def fetch_index_data(self, force: bool = False) -> dict:
+        """抓取大盤指數數據（盤中快取 60 秒，盤後快取 10 分鐘）。force=True 跳過快取強制刷新。"""
+        from datetime import datetime, time as dtime
+        now = datetime.now()
+        _is_trading = (
+            now.weekday() < 5
+            and dtime(9, 0) <= now.time() <= dtime(13, 30)
+        )
+        cache_ttl = 60 if _is_trading else 600
+
+        if not force:
+            cached = await self.cache.get("index:latest")
+            if cached:
+                return cached
+
         logger.info("正在抓取大盤指數數據...")
         results = {}
         for name, symbol in INDEX_SYMBOLS.items():
@@ -206,22 +266,50 @@ class YahooWorker:
             if meta.get("regularMarketPrice"):
                 results[name] = {
                     "symbol": symbol,
-                    "name": name,
-                    "price": meta.get("regularMarketPrice"),
-                    "change": meta.get("regularMarketChange"),
-                    "change_percent": meta.get("regularMarketChangePercent"),
+                    "name": INDEX_NAMES.get(name, name),
+                    "price": round(meta.get("regularMarketPrice"), 2),
+                    "change": round(meta.get("regularMarketChange") or 0, 2),
+                    "change_percent": round(meta.get("regularMarketChangePercent") or 0, 2),
                     "volume": meta.get("regularMarketVolume"),
                     "market_state": meta.get("marketState"),
                 }
                 logger.info(f"  {name}: {meta.get('regularMarketPrice')}")
             else:
                 logger.warning(f"  無法取得 {name} 數據")
+
+        if results:
+            await self.cache.set("index:latest", results, expire=cache_ttl)
         return results
 
     async def fetch_historical_kline(
         self, symbol: str, days: int = 1095
     ) -> list[dict]:
-        """抓取歷史 K 線數據並回傳列表"""
+        """
+        抓取歷史日K線數據
+
+        台股（*.TW）優先使用 Sinopac Singleton 服務（預熱後立即可用）。
+        指數（^TWII 等）及 Sinopac 未就緒時 fallback 到 yfinance。
+        """
+        if symbol.endswith(".TW"):
+            stock_code = symbol[:-3]
+            try:
+                from worker.sinopac_worker import sinopac_service
+                if sinopac_service.is_connected and sinopac_service._contracts_ready.is_set():
+                    end_str = date.today().strftime("%Y-%m-%d")
+                    start_str = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+                    klines = await self._run_sync(
+                        sinopac_service.get_historical_kline,
+                        stock_code,
+                        start_str,
+                        end_str,
+                    )
+                    if klines:
+                        return klines
+                    logger.warning(f"Sinopac 無資料 [{stock_code}]，fallback 到 yfinance")
+            except Exception as e:
+                logger.warning(f"Sinopac 抓取失敗 [{stock_code}]: {e}，fallback 到 yfinance")
+
+        # fallback：yfinance
         if days <= 365:
             period = "1y"
         elif days <= 730:
@@ -348,13 +436,13 @@ yahoo_worker = YahooWorker()
 
 async def fetch_adr_data():
     logger.info("開始執行 Yahoo ADR 數據抓取...")
-    results = await yahoo_worker.fetch_adr_data()
+    results = await yahoo_worker.fetch_adr_data(force=True)
     logger.info(f"ADR 數據抓取完成: {len(results)} 筆")
 
 
 async def fetch_index_data():
     logger.info("開始執行 Yahoo 大盤指數抓取...")
-    results = await yahoo_worker.fetch_index_data()
+    results = await yahoo_worker.fetch_index_data(force=True)
     logger.info(f"大盤指數抓取完成: {len(results)} 筆")
 
 

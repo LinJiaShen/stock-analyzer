@@ -38,6 +38,7 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       CORS_ORIGINS: http://localhost:3000
+      PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"
     depends_on:

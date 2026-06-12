@@ -58,7 +58,14 @@ pytest -k "test_name"           # 單一測試
 
 **TWSE 速率限制** — 官方 TWSE API 有嚴格阻斷機制。`worker/twse_worker.py` 必須使用 Redis 快取結果、隨機延遲與指數退避重試。初期歷史數據優先使用 Yahoo Finance 打底，降低對 TWSE 的依賴。
 
-**LLM 整合** — Ollama 在本地執行（預設模型：`qwen:7b`）。務必使用 `format=json` 模式確保輸出結構穩定。推論結果快取至 Redis 避免重複運算。Docker 環境中 `OLLAMA_BASE_URL` 指向 `host.docker.internal:11434`。
+**全市場資料管線** —
+- 股票清單 + 產業別：TWSE/TPEx OpenAPI（`worker/stock_list_worker.py`，admin `POST /sync-stocks` 觸發）
+- 每日全市場 K 線：`worker/market_snapshot_worker.py` 用 `STOCK_DAY_ALL` + `tpex_mainboard_quotes` 兩個請求覆蓋全市場（排程 18:05），以 `(stock_code, trade_date)` upsert 冪等
+- 歷史回補：`backend/backfill_all_kline.py`（yfinance，上市 `.TW`/上櫃 `.TWO`，可中斷續跑）
+- 三大法人籌碼：`worker/chip_worker.py` 用 T86 端點單請求全市場（排程 18:30），單位為張
+- 新聞：鉅亨 API + Google News RSS（個股/產業/全球三層），LLM 評分後存 `sentiment_data`（全球新聞 `stock_code=NULL`）
+
+**LLM 整合** — Ollama 在本地執行（模型：`qwen3:8b`，qwen3 系列需傳 `think: false`）。務必使用 `format=json` 模式確保輸出結構穩定。推論結果快取至 Redis 避免重複運算。Docker 環境中 `OLLAMA_BASE_URL` 指向 `host.docker.internal:11434`。LLM 不可用時各服務需提供規則式 fallback（見 `services/llm.py`）。
 
 **多因子評分權重** — 技術面 30%、籌碼面 30%、基本面 20%、情緒面 20%。完整因子細項請參考 `plans/architecture.md` §6.1，對應實作在 `services/scoring.py`。
 

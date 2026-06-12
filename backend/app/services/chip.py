@@ -22,14 +22,14 @@ class ChipService:
 
     async def _fetch_chip_data(self, stock_code: str, days: int = 90) -> list[ChipData]:
         """取得籌碼數據"""
-        cutoff_date = datetime.now() - timedelta(days=days)
+        cutoff_date = (datetime.now() - timedelta(days=days)).date()
         stmt = (
             select(ChipData)
             .where(
                 ChipData.stock_code == stock_code,
-                ChipData.record_date >= cutoff_date,
+                ChipData.trade_date >= cutoff_date,
             )
-            .order_by(desc(ChipData.record_date))
+            .order_by(desc(ChipData.trade_date))
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()
@@ -53,26 +53,26 @@ class ChipService:
                 "signal": "neutral",
             }
 
-        # 計算最近 30 天的加總
-        foreign_net = sum([chip.foreign_net_buy or 0 for chip in chip_data_list])
-        invest_trust_net = sum([chip.invest_trust_net_buy or 0 for chip in chip_data_list])
-        proprietary_net = sum([chip.proprietary_net_buy or 0 for chip in chip_data_list])
+        # 計算最近 N 天的加總（ChipData 欄位：foreign_net, trust_net, proprietary_net）
+        foreign_net = sum([float(chip.foreign_net or 0) for chip in chip_data_list])
+        invest_trust_net = sum([float(chip.trust_net or 0) for chip in chip_data_list])
+        proprietary_net = sum([float(chip.proprietary_net or 0) for chip in chip_data_list])
 
         # 計算連續買賣超天數
         foreign_consecutive = 0
         for chip in chip_data_list:
-            if chip.foreign_net_buy and chip.foreign_net_buy > 0:
+            if chip.foreign_net and float(chip.foreign_net) > 0:
                 foreign_consecutive += 1
-            elif chip.foreign_net_buy and chip.foreign_net_buy < 0:
+            elif chip.foreign_net and float(chip.foreign_net) < 0:
                 foreign_consecutive -= 1
             else:
                 break
 
         invest_trust_consecutive = 0
         for chip in chip_data_list:
-            if chip.invest_trust_net_buy and chip.invest_trust_net_buy > 0:
+            if chip.trust_net and float(chip.trust_net) > 0:
                 invest_trust_consecutive += 1
-            elif chip.invest_trust_net_buy and chip.invest_trust_net_buy < 0:
+            elif chip.trust_net and float(chip.trust_net) < 0:
                 invest_trust_consecutive -= 1
             else:
                 break
@@ -106,69 +106,52 @@ class ChipService:
 
     async def analyze_margin_trading(self, stock_code: str, days: int = 30) -> dict:
         """
-        融資融劵分析
+        融資分析
         - 融資餘額趨勢
-        - 融券餘額趨勢
         - 融資淨買進/淨賣出
-        - 融券賣出壓力
         """
         chip_data_list = await self._fetch_chip_data(stock_code, days)
         if not chip_data_list:
             return {
                 "margin_balance": 0,
-                "short_balance": 0,
                 "margin_net_buy": 0,
-                "short_net_sell": 0,
-                "margin_ratio": 0,
-                "trend": "neutral",
+                "margin_trend": "neutral",
                 "signal": "neutral",
             }
 
-        # 最新一筆數據
         latest = chip_data_list[0]
-        margin_balance = latest.margin_balance or 0
-        short_balance = latest.short_balance or 0
+        margin_balance = float(latest.margin_balance or 0)
 
-        # 計算融資融券變化趨勢
+        # 融資餘額趨勢
         if len(chip_data_list) >= 10:
-            recent_5_avg = np.mean([c.margin_balance or 0 for c in chip_data_list[:5]])
-            old_5_avg = np.mean([c.margin_balance or 0 for c in chip_data_list[5:10]])
+            recent_5_avg = np.mean([float(c.margin_balance or 0) for c in chip_data_list[:5]])
+            old_5_avg = np.mean([float(c.margin_balance or 0) for c in chip_data_list[5:10]])
             margin_trend = "increasing" if recent_5_avg > old_5_avg else "decreasing"
         else:
             margin_trend = "neutral"
 
-        short_recent_5_avg = np.mean([c.short_balance or 0 for c in chip_data_list[:5]]) if len(chip_data_list) >= 5 else 0
-        short_old_5_avg = np.mean([c.short_balance or 0 for c in chip_data_list[5:10]]) if len(chip_data_list) >= 10 else 0
-        short_trend = "increasing" if short_recent_5_avg > short_old_5_avg else "decreasing"
-
-        # 融資融券比
-        margin_ratio = margin_balance / short_balance if short_balance > 0 else 0
-
-        # 訊號判斷
-        if margin_trend == "increasing" and short_trend == "decreasing":
-            signal = "bullish"
-        elif margin_trend == "decreasing" and short_trend == "increasing":
+        # 融資增加通常是散戶追高（偏空訊號）
+        if margin_trend == "increasing" and margin_balance > 0:
             signal = "bearish"
+        elif margin_trend == "decreasing":
+            signal = "neutral"
         else:
             signal = "neutral"
 
+        margin_net_buy = (float(latest.margin_buy or 0)) - (float(latest.margin_sell or 0))
+
         return {
             "margin_balance": margin_balance,
-            "short_balance": short_balance,
-            "margin_net_buy": latest.margin_buy or 0 - (latest.margin_sell or 0),
-            "short_net_sell": latest.short_sell or 0,
-            "margin_ratio": margin_ratio,
+            "margin_net_buy": margin_net_buy,
             "margin_trend": margin_trend,
-            "short_trend": short_trend,
             "signal": signal,
         }
 
     async def analyze_concentration(self, stock_code: str, days: int = 90) -> dict:
         """
         籌碼集中度分析
-        - 大戶持股變化
-        - 籌碼集中度指標
-        - 散戶vs大戶比例
+        - 法人合計動向作為大戶代理指標
+        - 籌碼集中度估算
         """
         chip_data_list = await self._fetch_chip_data(stock_code, days)
         if not chip_data_list or len(chip_data_list) < 20:
@@ -179,27 +162,28 @@ class ChipService:
                 "signal": "neutral",
             }
 
-        # 計算籌碼集中度 (假設有大戶持股數據)
-        # 這裡使用簡化版本，實際應從 TDCCHolderData 表取得
-        recent_avg_volume = np.mean([chip.volume or 0 for chip in chip_data_list[:10]])
-        old_avg_volume = np.mean([chip.volume or 0 for chip in chip_data_list[20:30]]) if len(chip_data_list) >= 30 else recent_avg_volume
+        # 以法人（外資 + 投信）合計淨買進作為大戶動向代理指標
+        recent_institutional = sum(
+            float(chip.foreign_net or 0) + float(chip.trust_net or 0)
+            for chip in chip_data_list[:10]
+        )
+        older_institutional = sum(
+            float(chip.foreign_net or 0) + float(chip.trust_net or 0)
+            for chip in chip_data_list[20:30]
+        ) if len(chip_data_list) >= 30 else 0
 
-        # 成交量變化作為籌碼集中度代理指標
-        if old_avg_volume > 0:
-            concentration_ratio = recent_avg_volume / old_avg_volume
-        else:
-            concentration_ratio = 1.0
-
-        # 判斷大戶趨勢
-        if concentration_ratio > 1.3:
+        if recent_institutional > 0 and recent_institutional > older_institutional:
             large_holder_trend = "accumulating"
             signal = "bullish"
-        elif concentration_ratio < 0.7:
+            concentration_ratio = 1.3
+        elif recent_institutional < 0:
             large_holder_trend = "distributing"
             signal = "bearish"
+            concentration_ratio = 0.7
         else:
             large_holder_trend = "stable"
             signal = "neutral"
+            concentration_ratio = 1.0
 
         return {
             "concentration_ratio": concentration_ratio,

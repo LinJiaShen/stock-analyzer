@@ -122,8 +122,8 @@ export default function WatchlistCard({ stocks, loading = false, mode = "pre-mar
                   <span
                     className={`font-medium ${
                       stock.change_percent && stock.change_percent >= 0
-                        ? "text-green-600"
-                        : "text-red-600"
+                        ? "text-red-600"
+                        : "text-green-600"
                     }`}
                   >
                     {stock.change_percent && stock.change_percent >= 0 ? "+" : ""}

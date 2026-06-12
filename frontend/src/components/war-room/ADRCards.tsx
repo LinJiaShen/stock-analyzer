@@ -43,8 +43,8 @@ export default function ADRCard({ adrList, loading = false }: Props) {
             <div
               className={`flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded ${
                 adr.change_percent >= 0
-                  ? "text-green-700 bg-green-50"
-                  : "text-red-700 bg-red-50"
+                  ? "text-red-700 bg-red-50"
+                  : "text-green-700 bg-green-50"
               }`}
             >
               {adr.change_percent >= 0 ? (

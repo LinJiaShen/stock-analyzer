@@ -143,8 +143,8 @@ async def get_holding_diagnosis(
 ):
     """
     取得持股健診報告
-    
-    TODO: 整合多因子評分模型與 LLM 健診摘要
+
+    整合多因子評分、決策訊號與持有損益，產生健診摘要
     """
     result = await db.execute(
         select(Holding).where(
@@ -153,18 +153,80 @@ async def get_holding_diagnosis(
         )
     )
     holding = result.scalar_one_or_none()
-    
+
     if not holding:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="找不到該持股記錄"
         )
-    
-    # TODO: 呼叫 scoring_service 計算評分
-    # TODO: 呼叫 llm_service 生成健診摘要
+
+    from app.services.scoring import ScoringService
+
+    service = ScoringService(db)
+    try:
+        score_data = await service.calculate_composite_score(holding.stock_code)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"評分計算失敗: {e}")
+
+    # 決策訊號（含操作建議）
+    signal = None
+    try:
+        signals = await service.generate_signals(holding.stock_code, "all")
+        signal = signals[0] if signals else None
+    except Exception:
+        pass
+
+    # 持有損益
+    current_price = score_data.get("current_price")
+    avg_cost = float(holding.avg_cost) if holding.avg_cost else None
+    pnl = None
+    if current_price and avg_cost and holding.quantity:
+        qty = float(holding.quantity)
+        pnl = {
+            "avg_cost": avg_cost,
+            "current_price": current_price,
+            "unrealized_pnl": round((current_price - avg_cost) * qty, 0),
+            "unrealized_pnl_pct": round((current_price - avg_cost) / avg_cost * 100, 2),
+        }
+
+    # Rule-based 健診摘要
+    total = score_data.get("total_score", 50)
+    summary_parts = []
+    if total >= 70:
+        summary_parts.append(f"綜合評分 {total} 分，多因子面向偏多。")
+    elif total >= 50:
+        summary_parts.append(f"綜合評分 {total} 分，目前處於中性區間。")
+    else:
+        summary_parts.append(f"綜合評分 {total} 分，多項因子偏弱，建議檢視持有理由。")
+
+    if pnl:
+        if pnl["unrealized_pnl_pct"] >= 0:
+            summary_parts.append(f"目前未實現獲利 {pnl['unrealized_pnl_pct']}%。")
+        elif pnl["unrealized_pnl_pct"] <= -10:
+            summary_parts.append(
+                f"目前未實現虧損 {abs(pnl['unrealized_pnl_pct'])}%，已超過常見停損閾值（-10%），建議評估減碼。"
+            )
+        else:
+            summary_parts.append(f"目前未實現虧損 {abs(pnl['unrealized_pnl_pct'])}%。")
+
+    if signal and signal.get("operation"):
+        op = signal["operation"]
+        summary_parts.append(
+            f"參考停損 {op.get('stop_loss')}、目標價 {op.get('target')}（風報比 1:{op.get('rr_ratio')}）。"
+        )
+
     return {
         "holding_id": str(holding_id),
         "stock_code": holding.stock_code,
         "stock_name": holding.stock_name,
-        "message": "健診功能開發中，請稍候..."
+        "score": {
+            "total_score": total,
+            "technical_score": score_data.get("technical_score"),
+            "chip_score": score_data.get("chip_score"),
+            "fundamental_score": score_data.get("fundamental_score"),
+            "sentiment_score": score_data.get("sentiment_score"),
+        },
+        "signal": signal,
+        "pnl": pnl,
+        "summary": " ".join(summary_parts),
     }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import {
   TrendingUp,
   TrendingDown,
@@ -60,43 +60,102 @@ export default function HoldingsAnalysisPage() {
     },
   });
 
-  // 模擬分析數據 (後續替換為真實 API)
-  const analysisData: HoldingAnalysis[] = holdings.map((h) => {
-    const currentPrice = (h.avg_cost || 100) * (0.9 + Math.random() * 0.3);
-    const marketValue = currentPrice * h.quantity;
-    const cost = (h.avg_cost || 0) * h.quantity;
-    const pnl = marketValue - cost;
-    const pnlPercent = cost > 0 ? (pnl / cost) * 100 : 0;
-
-    return {
-      id: h.id,
-      stock_code: h.stock_code,
-      stock_name: h.stock_name,
-      quantity: h.quantity,
-      avg_cost: h.avg_cost || 0,
-      current_price: Math.round(currentPrice * 100) / 100,
-      market_value: Math.round(marketValue),
-      pnl: Math.round(pnl),
-      pnl_percent: Math.round(pnlPercent * 10) / 10,
-      weight: 0,
-      score: Math.round(50 + Math.random() * 40),
-      signal: Math.random() > 0.5 ? "買入" : Math.random() > 0.5 ? "持有" : "賣出",
-      radar_data: {
-        value: Math.round(50 + Math.random() * 45),
-        momentum: Math.round(50 + Math.random() * 45),
-        chip: Math.round(50 + Math.random() * 45),
-        growth: Math.round(50 + Math.random() * 45),
-        resistance: Math.round(50 + Math.random() * 45),
+  // 逐股抓取：最新收盤價 (kline)
+  const priceQueries = useQueries({
+    queries: holdings.map((h) => ({
+      queryKey: ["kline-latest", h.stock_code],
+      queryFn: async () => {
+        const res = await api.get(`/api/stocks/${h.stock_code}/kline?interval=1d&limit=2`);
+        return res.data;
       },
-    };
+      staleTime: 5 * 60 * 1000,
+      enabled: holdings.length > 0,
+    })),
   });
 
-  // 計算總權重
-  const totalMarketValue = analysisData.reduce((sum, a) => sum + a.market_value, 0);
-  const finalAnalysis = analysisData.map((a) => ({
-    ...a,
-    weight: totalMarketValue > 0 ? (a.market_value / totalMarketValue) * 100 : 0,
-  }));
+  // 逐股抓取：多因子評分
+  const scoreQueries = useQueries({
+    queries: holdings.map((h) => ({
+      queryKey: ["decision-score", h.stock_code],
+      queryFn: async () => {
+        const res = await api.get(`/api/decision/score/${h.stock_code}`);
+        return res.data;
+      },
+      staleTime: 10 * 60 * 1000,
+      enabled: holdings.length > 0,
+    })),
+  });
+
+  // 逐股抓取：雷達圖數據
+  const radarQueries = useQueries({
+    queries: holdings.map((h) => ({
+      queryKey: ["radar", h.stock_code],
+      queryFn: async () => {
+        const res = await api.get(`/api/decision/radar/${h.stock_code}`);
+        return res.data;
+      },
+      staleTime: 10 * 60 * 1000,
+      enabled: holdings.length > 0,
+    })),
+  });
+
+  // 逐股抓取：股票產業資訊
+  const stockQueries = useQueries({
+    queries: holdings.map((h) => ({
+      queryKey: ["stock-info", h.stock_code],
+      queryFn: async () => {
+        const res = await api.get(`/api/stocks/${h.stock_code}`);
+        return res.data;
+      },
+      staleTime: 60 * 60 * 1000,
+      enabled: holdings.length > 0,
+    })),
+  });
+
+  const analysisLoading =
+    priceQueries.some((q) => q.isLoading) || scoreQueries.some((q) => q.isLoading);
+
+  const finalAnalysis = useMemo<HoldingAnalysis[]>(() => {
+    const raw = holdings.map((h, i) => {
+      const bars = priceQueries[i]?.data?.data || [];
+      const currentPrice =
+        bars.length > 0 ? (bars[bars.length - 1].close ?? h.avg_cost ?? 0) : (h.avg_cost ?? 0);
+      const avgCost = h.avg_cost || 0;
+      const marketValue = currentPrice * h.quantity;
+      const cost = avgCost * h.quantity;
+      const pnl = marketValue - cost;
+      const pnlPercent = cost > 0 ? (pnl / cost) * 100 : 0;
+
+      const scoreData = scoreQueries[i]?.data;
+      const score: number = scoreData?.total_score ?? 0;
+      const signal = score >= 70 ? "買入" : score >= 50 ? "持有" : "觀察";
+
+      const radarRaw = radarQueries[i]?.data?.radar;
+      const radar_data = radarRaw ?? { value: 0, momentum: 0, chip: 0, growth: 0, resistance: 0 };
+
+      return {
+        id: h.id,
+        stock_code: h.stock_code,
+        stock_name: h.stock_name,
+        quantity: h.quantity,
+        avg_cost: avgCost,
+        current_price: Math.round(currentPrice * 100) / 100,
+        market_value: Math.round(marketValue),
+        pnl: Math.round(pnl),
+        pnl_percent: Math.round(pnlPercent * 10) / 10,
+        weight: 0,
+        score,
+        signal,
+        radar_data,
+      };
+    });
+
+    const totalMV = raw.reduce((s, a) => s + a.market_value, 0);
+    return raw.map((a) => ({
+      ...a,
+      weight: totalMV > 0 ? (a.market_value / totalMV) * 100 : 0,
+    }));
+  }, [holdings, priceQueries, scoreQueries, radarQueries]);
 
   // 計算組合總損益
   const totalCost = finalAnalysis.reduce((sum, a) => sum + a.avg_cost * a.quantity, 0);
@@ -104,16 +163,25 @@ export default function HoldingsAnalysisPage() {
   const totalPnl = totalValue - totalCost;
   const totalPnlPercent = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
 
-  // 產業分佈 (模擬)
-  const industryDistribution = [
-    { name: "電子", weight: 35, color: "bg-blue-500" },
-    { name: "金融", weight: 25, color: "bg-green-500" },
-    { name: "傳產", weight: 20, color: "bg-yellow-500" },
-    { name: "生技", weight: 15, color: "bg-purple-500" },
-    { name: "其他", weight: 5, color: "bg-gray-400" },
-  ];
+  // 產業分佈 — 從 API 取得的股票產業資訊聚合
+  const industryDistribution = useMemo(() => {
+    const COLORS = ["bg-blue-500", "bg-green-500", "bg-yellow-500", "bg-purple-500", "bg-orange-400", "bg-gray-400"];
+    const map: Record<string, number> = {};
+    finalAnalysis.forEach((a, i) => {
+      const industry = stockQueries[i]?.data?.industry || "其他";
+      map[industry] = (map[industry] || 0) + a.market_value;
+    });
+    const total = Object.values(map).reduce((s, v) => s + v, 0);
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value], idx) => ({
+        name,
+        weight: total > 0 ? Math.round((value / total) * 100) : 0,
+        color: COLORS[idx % COLORS.length],
+      }));
+  }, [finalAnalysis, stockQueries]);
 
-  if (isLoading) {
+  if (isLoading || analysisLoading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex items-center justify-center h-64">

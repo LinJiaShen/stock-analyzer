@@ -315,6 +315,19 @@ class TechnicalService:
         days = base_days * interval_multiplier.get(interval, 1)
 
         daily_bars = await self._fetch_bars(stock_code, days)
+
+        # 數據不足時，自動從 Yahoo Finance 抓取
+        if len(daily_bars) < 20:
+            try:
+                from worker.yahoo_worker import yahoo_worker
+                symbol = f"{stock_code}.TW"
+                klines = await yahoo_worker.fetch_historical_kline(symbol, 1095)
+                if klines:
+                    await yahoo_worker.save_kline_data(stock_code, klines)
+                    daily_bars = await self._fetch_bars(stock_code, days)
+            except Exception:
+                pass
+
         bars = self._aggregate_bars(daily_bars, interval)
 
         if not bars or len(bars) < 20:

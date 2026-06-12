@@ -43,8 +43,8 @@ export default function InternationalIndexCard({ indices, loading = false }: Pro
               <div
                 className={`flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded ${
                   idx.change_percent >= 0
-                    ? "text-green-700 bg-green-50"
-                    : "text-red-700 bg-red-50"
+                    ? "text-red-700 bg-red-50"
+                    : "text-green-700 bg-green-50"
                 }`}
               >
                 {idx.change_percent >= 0 ? (
