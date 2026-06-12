@@ -1,0 +1,7 @@
+tunnel: f0309e4f-6ffe-4547-886c-ecaecd351cba
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: api.tstock.uk
+    service: http://backend:8000
+  - service: http_status:404

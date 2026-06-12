@@ -37,7 +37,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      CORS_ORIGINS: http://localhost:3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       PYTHONUNBUFFERED: "1"
     ports:
       - "8000:8000"
@@ -87,6 +87,17 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+
+  # Cloudflare Tunnel — 把 backend:8000 暴露到外網（不用開 port）
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflare/credentials.json:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   pgdata:
