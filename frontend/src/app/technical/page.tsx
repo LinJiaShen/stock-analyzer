@@ -2,7 +2,7 @@
 
 import { Search, TrendingUp, Loader2, Wifi, WifiOff } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
   ComposedChart,
   LineChart,
@@ -47,7 +47,7 @@ interface TechnicalResult {
   bollinger_position?: number;
 }
 
-export default function TechnicalPage() {
+function TechnicalPageContent() {
   const searchParams = useSearchParams();
   const codeFromUrl = searchParams.get("code");
   const [searchCode, setSearchCode] = useState(codeFromUrl || "2330");
@@ -1037,4 +1037,8 @@ export default function TechnicalPage() {
       )}
     </div>
   );
+}
+
+export default function TechnicalPage() {
+  return <Suspense fallback={<div className="p-8 text-gray-400">載入中...</div>}><TechnicalPageContent /></Suspense>;
 }

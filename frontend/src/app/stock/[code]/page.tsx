@@ -13,6 +13,10 @@ import AIAnalysisCard from "@/components/decision/AIAnalysisCard";
 import api from "@/lib/api";
 import { useStockWebSocket, type WebSocketMessage } from "@/hooks/useStockWebSocket";
 import { useIsMarketOpen } from "@/hooks/useIsMarketOpen";
+import {
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer, ReferenceLine,
+} from "recharts";
 
 interface KLineData {
   date: string;
@@ -529,74 +533,175 @@ export default function StockDetailPage() {
 
         {activeTab === "chip" && (
           <div className="space-y-6">
-            {/* 籌碼分析摘要 */}
+            {/* 摘要統計卡片 */}
             {chipAnalysis && (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">籌碼分析</h2>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">籌碼摘要</h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* 外資連買/賣 */}
                   <div className="p-3 bg-gray-50 rounded-lg">
-                    <div className="text-xs text-gray-500 mb-1">外資連買/賣天數</div>
-                    <div className={`text-xl font-bold font-mono ${
+                    <div className="text-xs text-gray-500 mb-1">外資連買/賣</div>
+                    <div className={`text-2xl font-bold font-mono ${
                       (chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) > 0 ? "text-red-600" :
-                      (chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) < 0 ? "text-green-600" : "text-gray-600"
+                      (chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) < 0 ? "text-green-600" : "text-gray-500"
                     }`}>
+                      {(chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) > 0 ? "+" : ""}
                       {chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0} 天
                     </div>
-                  </div>
-                  <div className="p-3 bg-gray-50 rounded-lg">
-                    <div className="text-xs text-gray-500 mb-1">投信連買/賣天數</div>
-                    <div className={`text-xl font-bold font-mono ${
-                      (chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) > 0 ? "text-red-600" :
-                      (chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) < 0 ? "text-green-600" : "text-gray-600"
-                    }`}>
-                      {chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0} 天
+                    <div className="text-xs text-gray-400 mt-1">
+                      {(chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) > 0 ? "連續買超" :
+                       (chipAnalysis.dealer_flow?.foreign_consecutive_days ?? 0) < 0 ? "連續賣超" : "中性"}
                     </div>
                   </div>
+                  {/* 投信連買/賣 */}
                   <div className="p-3 bg-gray-50 rounded-lg">
-                    <div className="text-xs text-gray-500 mb-1">籌碼集中度</div>
-                    <div className="text-xl font-bold font-mono text-blue-600">
-                      {chipAnalysis.concentration?.concentration_ratio != null
-                        ? `${(chipAnalysis.concentration.concentration_ratio * 100).toFixed(1)}%`
+                    <div className="text-xs text-gray-500 mb-1">投信連買/賣</div>
+                    <div className={`text-2xl font-bold font-mono ${
+                      (chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) > 0 ? "text-red-600" :
+                      (chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) < 0 ? "text-green-600" : "text-gray-500"
+                    }`}>
+                      {(chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) > 0 ? "+" : ""}
+                      {chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0} 天
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {(chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) > 0 ? "連續買超" :
+                       (chipAnalysis.dealer_flow?.invest_trust_consecutive_days ?? 0) < 0 ? "連續賣超" : "中性"}
+                    </div>
+                  </div>
+                  {/* 30日外資累計 */}
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">30日外資累計</div>
+                    <div className={`text-2xl font-bold font-mono ${
+                      (chipAnalysis.dealer_flow?.foreign_net_buy ?? 0) >= 0 ? "text-red-600" : "text-green-600"
+                    }`}>
+                      {chipAnalysis.dealer_flow?.foreign_net_buy != null
+                        ? `${(chipAnalysis.dealer_flow.foreign_net_buy / 1000).toFixed(1)}K`
                         : "--"}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">張</div>
+                  </div>
+                  {/* 融資狀況 */}
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs text-gray-500 mb-1">融資趨勢</div>
+                    <div className={`text-2xl font-bold font-mono ${
+                      chipAnalysis.margin_trading?.margin_trend === "increasing" ? "text-red-600" :
+                      chipAnalysis.margin_trading?.margin_trend === "decreasing" ? "text-green-600" : "text-gray-500"
+                    }`}>
+                      {chipAnalysis.margin_trading?.margin_trend === "increasing" ? "增加↑" :
+                       chipAnalysis.margin_trading?.margin_trend === "decreasing" ? "減少↓" : "持平"}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {chipAnalysis.margin_trading?.margin_balance != null
+                        ? `餘額 ${chipAnalysis.margin_trading.margin_balance.toLocaleString()} 張`
+                        : ""}
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* 籌碼原始數據表 */}
+            {/* 三大法人買賣超趨勢圖 */}
+            {chipData.length > 0 && (() => {
+              const sorted = [...chipData].sort((a, b) => a.date < b.date ? -1 : 1).slice(-20);
+              const shortDate = (d: string) => d.replace(/^\d{4}-/, "").replace("-", "/");
+              return (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <h3 className="text-base font-semibold text-gray-900 mb-4">三大法人買賣超（近20日，張）</h3>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <ComposedChart data={sorted} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => v >= 1000 || v <= -1000 ? `${(v/1000).toFixed(0)}K` : String(v)} />
+                      <Tooltip
+                        formatter={(val: any, name: any) => [val?.toLocaleString() + " 張", name]}
+                        labelFormatter={(l) => `日期：${l}`}
+                      />
+                      <Legend />
+                      <ReferenceLine y={0} stroke="#d1d5db" />
+                      <Bar dataKey="foreign_net" name="外資" fill="#ef4444" opacity={0.85} radius={[2,2,0,0]}
+                        label={false}
+                        /* 負值用綠色 */
+                        isAnimationActive={false}
+                      />
+                      <Bar dataKey="trust_net" name="投信" fill="#f97316" opacity={0.85} radius={[2,2,0,0]} isAnimationActive={false} />
+                      <Bar dataKey="proprietary_net" name="自營商" fill="#8b5cf6" opacity={0.7} radius={[2,2,0,0]} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              );
+            })()}
+
+            {/* 融資餘額趨勢圖 */}
+            {chipData.length > 0 && chipData.some((r: any) => r.margin_balance != null) && (() => {
+              const sorted = [...chipData]
+                .filter((r: any) => r.margin_balance != null)
+                .sort((a, b) => a.date < b.date ? -1 : 1)
+                .slice(-20);
+              const shortDate = (d: string) => d.replace(/^\d{4}-/, "").replace("-", "/");
+              const minVal = Math.min(...sorted.map((r: any) => r.margin_balance ?? 0));
+              const maxVal = Math.max(...sorted.map((r: any) => r.margin_balance ?? 0));
+              const padding = (maxVal - minVal) * 0.1 || 100;
+              return (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <h3 className="text-base font-semibold text-gray-900 mb-1">融資餘額趨勢（近20日，張）</h3>
+                  <p className="text-xs text-gray-400 mb-4">融資餘額增加 = 散戶槓桿增加（需注意籌碼穩定度）</p>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <ComposedChart data={sorted} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                      <YAxis domain={[minVal - padding, maxVal + padding]} tick={{ fontSize: 11 }}
+                        tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : String(v)} />
+                      <Tooltip
+                        formatter={(val: any) => [val?.toLocaleString() + " 張", "融資餘額"]}
+                        labelFormatter={(l) => `日期：${l}`}
+                      />
+                      <Line dataKey="margin_balance" name="融資餘額" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              );
+            })()}
+
+            {/* 原始數據表（完整20筆） */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-              <h3 className="text-base font-semibold text-gray-900 mb-4">近期三大法人買賣超</h3>
+              <h3 className="text-base font-semibold text-gray-900 mb-4">近期明細（張）</h3>
               {chipData.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="py-2 px-3 text-left text-gray-500">日期</th>
-                        <th className="py-2 px-3 text-right text-gray-500">外資</th>
-                        <th className="py-2 px-3 text-right text-gray-500">投信</th>
-                        <th className="py-2 px-3 text-right text-gray-500">自營商</th>
-                        <th className="py-2 px-3 text-right text-gray-500">融資餘額</th>
+                      <tr className="border-b border-gray-200 text-gray-500">
+                        <th className="py-2 px-3 text-left">日期</th>
+                        <th className="py-2 px-3 text-right">外資</th>
+                        <th className="py-2 px-3 text-right">投信</th>
+                        <th className="py-2 px-3 text-right">自營商</th>
+                        <th className="py-2 px-3 text-right">三大合計</th>
+                        <th className="py-2 px-3 text-right">融資餘額</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {[...chipData].reverse().slice(0, 10).map((row: any, i: number) => (
-                        <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-2 px-3 text-gray-700">{row.date}</td>
-                          <td className={`py-2 px-3 text-right font-mono ${(row.foreign_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
-                            {row.foreign_net != null ? row.foreign_net.toLocaleString() : "--"}
-                          </td>
-                          <td className={`py-2 px-3 text-right font-mono ${(row.trust_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
-                            {row.trust_net != null ? row.trust_net.toLocaleString() : "--"}
-                          </td>
-                          <td className={`py-2 px-3 text-right font-mono ${(row.proprietary_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
-                            {row.proprietary_net != null ? row.proprietary_net.toLocaleString() : "--"}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono text-gray-700">
-                            {row.margin_balance != null ? row.margin_balance.toLocaleString() : "--"}
-                          </td>
-                        </tr>
-                      ))}
+                      {[...chipData].sort((a: any, b: any) => a.date < b.date ? 1 : -1).slice(0, 20).map((row: any, i: number) => {
+                        const total = (row.foreign_net ?? 0) + (row.trust_net ?? 0) + (row.proprietary_net ?? 0);
+                        return (
+                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-2 px-3 text-gray-700">{row.date}</td>
+                            <td className={`py-2 px-3 text-right font-mono text-xs ${(row.foreign_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
+                              {row.foreign_net != null ? (row.foreign_net >= 0 ? "+" : "") + row.foreign_net.toLocaleString() : "--"}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-mono text-xs ${(row.trust_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
+                              {row.trust_net != null ? (row.trust_net >= 0 ? "+" : "") + row.trust_net.toLocaleString() : "--"}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-mono text-xs ${(row.proprietary_net ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>
+                              {row.proprietary_net != null ? (row.proprietary_net >= 0 ? "+" : "") + row.proprietary_net.toLocaleString() : "--"}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-mono text-xs font-semibold ${total >= 0 ? "text-red-700" : "text-green-700"}`}>
+                              {(total >= 0 ? "+" : "") + total.toLocaleString()}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono text-xs text-gray-600">
+                              {row.margin_balance != null ? row.margin_balance.toLocaleString() : "--"}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
