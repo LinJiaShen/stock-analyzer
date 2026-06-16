@@ -161,6 +161,12 @@ export interface IndustryAnalysis {
 }
 
 // 決策相關類型
+export interface DownsideExtension {
+  price: number;
+  pct: number;
+  note: string;
+}
+
 export interface OperationGuideData {
   entry_note: string;
   stop_loss: number;
@@ -169,6 +175,13 @@ export interface OperationGuideData {
   target_pct: number;
   rr_ratio: number;
   hold_period: string;
+  downside_extension?: DownsideExtension | null;
+}
+
+export interface ConfidenceData {
+  level: "high" | "medium" | "low";
+  score: number;
+  reason: string;
 }
 
 export interface ScoreData {
@@ -185,6 +198,7 @@ export interface ScoreData {
   support?: number | null;
   resistance?: number | null;
   operation?: OperationGuideData | null;
+  confidence?: ConfidenceData | null;
 }
 
 export interface RadarData {

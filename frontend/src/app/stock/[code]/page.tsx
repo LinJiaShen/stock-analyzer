@@ -9,6 +9,7 @@ import KLineIntervalSelector from "@/components/technical/KLineIntervalSelector"
 import ScoreBreakdownCard, { type ScoreExplanations } from "@/components/decision/ScoreBreakdownCard";
 import RadarChartComponent from "@/components/decision/RadarChartComponent";
 import OperationGuideCard from "@/components/decision/OperationGuideCard";
+import FundamentalCard from "@/components/decision/FundamentalCard";
 import AIAnalysisCard from "@/components/decision/AIAnalysisCard";
 import api from "@/lib/api";
 import { useStockWebSocket, type WebSocketMessage } from "@/hooks/useStockWebSocket";
@@ -821,8 +822,12 @@ export default function StockDetailPage() {
             {/* 操作建議（來自評分資料，不依賴訊號） */}
             <OperationGuideCard
               data={scoreData?.operation ?? signal?.operation ?? null}
+              confidence={scoreData?.confidence ?? null}
               loading={scoreData === null}
             />
+
+            {/* 基本面快照（估值與獲利能力） */}
+            <FundamentalCard stockCode={code} />
 
             {/* AI 分析（為什麼這個分數、注意什麼） */}
             <AIAnalysisCard stockCode={code} />

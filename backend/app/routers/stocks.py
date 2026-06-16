@@ -848,3 +848,133 @@ async def get_chip_data(
     )
 
 
+def _valuation_hints(f: dict) -> dict:
+    """
+    依當下可得指標產生白話估值判讀（不杜撰歷史均值）。
+
+    - PE：絕對區間粗判 + forward vs trailing 比較（forward 較低＝市場預期獲利成長）
+    - PB：< 1.5 偏低、> 4 偏高
+    - 殖利率：> 4% 高、< 1% 低
+    - ROE：> 15% 體質佳
+    """
+    pe = f.get("pe_ratio")
+    fpe = f.get("forward_pe")
+    pb = f.get("pb_ratio")
+    dy = f.get("dividend_yield")
+    roe = f.get("roe")
+
+    pe_hint = None
+    if pe is not None:
+        if pe <= 0:
+            pe_hint = "公司近12個月虧損（本益比為負，不適用）"
+        elif pe < 12:
+            pe_hint = "本益比偏低，相對便宜但需確認是否成長停滯"
+        elif pe < 20:
+            pe_hint = "本益比中等，估值合理區間"
+        elif pe < 30:
+            pe_hint = "本益比偏高，市場給予成長溢價"
+        else:
+            pe_hint = "本益比很高，須有高成長支撐，回檔風險較大"
+        if fpe is not None and pe > 0 and fpe > 0:
+            if fpe < pe * 0.9:
+                pe_hint += "；預估本益比較低，市場預期獲利成長"
+            elif fpe > pe * 1.1:
+                pe_hint += "；預估本益比較高，市場預期獲利下滑"
+
+    pb_hint = None
+    if pb is not None:
+        if pb < 1:
+            pb_hint = "股價低於每股淨值，深度價值區（留意是否有基本面疑慮）"
+        elif pb < 1.5:
+            pb_hint = "本淨比偏低"
+        elif pb < 4:
+            pb_hint = "本淨比中等"
+        else:
+            pb_hint = "本淨比偏高，資產溢價大"
+
+    dy_hint = None
+    if dy is not None:
+        if dy >= 4:
+            dy_hint = "殖利率高，適合存股族（須確認股利可持續）"
+        elif dy >= 2:
+            dy_hint = "殖利率中等"
+        elif dy > 0:
+            dy_hint = "殖利率偏低，公司多保留盈餘再投資"
+        else:
+            dy_hint = "近期未配息"
+
+    roe_hint = None
+    if roe is not None:
+        if roe >= 20:
+            roe_hint = "ROE 很高，獲利能力強"
+        elif roe >= 15:
+            roe_hint = "ROE 良好，體質佳"
+        elif roe >= 8:
+            roe_hint = "ROE 中等"
+        else:
+            roe_hint = "ROE 偏低，獲利效率待加強"
+
+    return {"pe": pe_hint, "pb": pb_hint, "dividend_yield": dy_hint, "roe": roe_hint}
+
+
+@router.get("/{stock_code}/fundamentals")
+async def get_fundamentals(
+    stock_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    個股基本面快照（本益比/本淨比/EPS/殖利率/ROE/市值）
+
+    來源 yfinance，於 DB 緩存 24 小時；過期或無資料時即時抓取更新。
+    附帶白話估值判讀（hints）。資料不可得時回傳 available=False。
+    """
+    from app.models.stock_fundamental import StockFundamental
+
+    CACHE_HOURS = 24
+    result = await db.execute(
+        select(StockFundamental).where(StockFundamental.stock_code == stock_code)
+    )
+    row = result.scalar_one_or_none()
+
+    fresh = False
+    if row and row.updated_at:
+        age = datetime.now(row.updated_at.tzinfo) - row.updated_at
+        fresh = age < timedelta(hours=CACHE_HOURS)
+
+    if not fresh:
+        # 決定 Yahoo 代碼後綴（上櫃 .TWO，其餘 .TW）
+        stock_res = await db.execute(select(Stock.market).where(Stock.code == stock_code))
+        market = stock_res.scalar_one_or_none()
+        suffix = ".TWO" if market == "tpex" else ".TW"
+        fetched = await yahoo_worker.fetch_fundamentals(f"{stock_code}{suffix}")
+        if fetched:
+            if row:
+                for k, v in fetched.items():
+                    setattr(row, k, v)
+            else:
+                row = StockFundamental(stock_code=stock_code, **fetched)
+                db.add(row)
+            await db.commit()
+            await db.refresh(row)
+
+    if not row:
+        return {"stock_code": stock_code, "available": False}
+
+    data = {
+        "pe_ratio": float(row.pe_ratio) if row.pe_ratio is not None else None,
+        "forward_pe": float(row.forward_pe) if row.forward_pe is not None else None,
+        "pb_ratio": float(row.pb_ratio) if row.pb_ratio is not None else None,
+        "eps": float(row.eps) if row.eps is not None else None,
+        "dividend_yield": float(row.dividend_yield) if row.dividend_yield is not None else None,
+        "roe": float(row.roe) if row.roe is not None else None,
+        "market_cap": int(row.market_cap) if row.market_cap is not None else None,
+    }
+    return {
+        "stock_code": stock_code,
+        "available": True,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        **data,
+        "hints": _valuation_hints(data),
+    }
+
+

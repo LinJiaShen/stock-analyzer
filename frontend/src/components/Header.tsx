@@ -78,6 +78,7 @@ export default function Header() {
       // 即使後端失敗也清除前端狀態
     }
     localStorage.removeItem("username");
+    localStorage.removeItem("access_token");
     setIsLoggedIn(false);
     setUsername("");
     window.location.href = "/login";

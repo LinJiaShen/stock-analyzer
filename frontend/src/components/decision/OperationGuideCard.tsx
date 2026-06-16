@@ -1,4 +1,10 @@
-import { Target, ShieldAlert, TrendingUp } from "lucide-react";
+import { Target, ShieldAlert, TrendingUp, TrendingDown, Gauge } from "lucide-react";
+
+export interface DownsideExtension {
+  price: number;
+  pct: number;
+  note: string;
+}
 
 export interface OperationGuide {
   entry_note: string;
@@ -8,14 +14,28 @@ export interface OperationGuide {
   target_pct: number;
   rr_ratio: number;
   hold_period: string;
+  downside_extension?: DownsideExtension | null;
+}
+
+export interface Confidence {
+  level: "high" | "medium" | "low";
+  score: number;
+  reason: string;
 }
 
 interface Props {
   data: OperationGuide | null | undefined;
+  confidence?: Confidence | null;
   loading?: boolean;
 }
 
-export default function OperationGuideCard({ data, loading = false }: Props) {
+const CONFIDENCE_STYLE: Record<string, { label: string; cls: string }> = {
+  high: { label: "高", cls: "bg-green-100 text-green-700 border-green-200" },
+  medium: { label: "中", cls: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+  low: { label: "低", cls: "bg-red-100 text-red-700 border-red-200" },
+};
+
+export default function OperationGuideCard({ data, confidence, loading = false }: Props) {
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
@@ -45,6 +65,17 @@ export default function OperationGuideCard({ data, loading = false }: Props) {
         <h3 className="text-base font-semibold text-gray-900">操作建議</h3>
         <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded">{data.hold_period}</span>
       </div>
+
+      {/* 訊號置信度：各維度一致程度，低信度提醒新手不宜重押 */}
+      {confidence && (
+        <div className={`flex items-start gap-2 mb-3 px-3 py-2 rounded-lg border text-xs ${CONFIDENCE_STYLE[confidence.level].cls}`}>
+          <Gauge className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">訊號置信度：{CONFIDENCE_STYLE[confidence.level].label}（{confidence.score} 分）</span>
+            <span className="opacity-80"> — {confidence.reason}</span>
+          </div>
+        </div>
+      )}
 
       <p className="text-xs text-blue-600 bg-blue-50 px-3 py-2 rounded-lg mb-4">{data.entry_note}</p>
 
@@ -91,6 +122,20 @@ export default function OperationGuideCard({ data, loading = false }: Props) {
           1 : {data.rr_ratio}
         </span>
       </div>
+
+      {/* 極端情況警示：跌破停損後的延伸風險位 */}
+      {data.downside_extension && (
+        <div className="mt-4 pt-4 border-t border-gray-100 flex items-start gap-2">
+          <TrendingDown className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <span className="font-medium text-gray-700">極端情況警示：</span>
+            <span className="text-gray-500">
+              {data.downside_extension.note}約 <b className="font-mono text-rose-600">{data.downside_extension.price}</b>
+              （<span className="font-mono">{data.downside_extension.pct}%</span>）。停損務必執行，避免凹單擴大虧損。
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

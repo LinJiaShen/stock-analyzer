@@ -19,6 +19,8 @@ from app.routers import auth, holdings, stocks, analysis, decision, admin, webso
 import app.models.watchlist  # noqa: F401
 import app.models.score_history  # noqa: F401
 import app.models.paper_trade  # noqa: F401
+import app.models.paper_account  # noqa: F401
+import app.models.stock_fundamental  # noqa: F401
 
 # 結構化日誌設定
 logging.basicConfig(

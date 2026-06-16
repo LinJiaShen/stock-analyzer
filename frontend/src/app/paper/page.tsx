@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FlaskConical, Plus, Trash2, X, CheckCircle2, Sparkles, RefreshCw } from "lucide-react";
+import { FlaskConical, Plus, Trash2, X, CheckCircle2, Sparkles, RefreshCw, Wallet, Pencil, Calculator, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -47,6 +47,14 @@ interface Stats {
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;
+  // 帳戶本金面
+  initial_capital: number;
+  available_cash: number;
+  deployed: number;
+  equity: number;
+  return_pct: number;
+  peak_equity: number;
+  drawdown_pct: number;
 }
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
@@ -66,10 +74,18 @@ const fmtMoney = (v: number | null | undefined) => {
   return `${sign}$${Math.abs(v) >= 10000 ? (v / 1000).toFixed(1) + "K" : v.toFixed(0)}`;
 };
 
+// 大額金額以「萬」為單位顯示（本金、餘額、權益）
+const fmtTwd = (v: number | null | undefined) => {
+  if (v == null) return "--";
+  if (Math.abs(v) >= 10000) return `$${(v / 10000).toFixed(1)} 萬`;
+  return `$${v.toFixed(0)}`;
+};
+
 export default function PaperTradingPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
+  const [showCapital, setShowCapital] = useState(false);
   const [fillTarget, setFillTarget] = useState<PaperTrade | null>(null);
 
   const { data: stats } = useQuery<Stats>({
@@ -186,6 +202,50 @@ export default function PaperTradingPage() {
               {aiResult}
             </div>
           )}
+
+          {/* 本金帳戶帶：本金 / 可用餘額 / 總權益 / 報酬率 / 最大回撤 */}
+          <div className="mb-4 rounded-xl bg-slate-800/50 border border-slate-700/60 px-4 py-3.5">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 divide-x divide-slate-700/60">
+              <div className="px-4 first:pl-0">
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-1">
+                  <Wallet className="w-3 h-3" />本金
+                  <button
+                    onClick={() => setShowCapital(true)}
+                    className="text-indigo-400 hover:text-indigo-300"
+                    title="設定本金"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="text-lg font-bold font-mono text-white">{stats ? fmtTwd(stats.initial_capital) : "--"}</div>
+              </div>
+              <div className="px-4">
+                <div className="text-[11px] text-slate-500 mb-1">可用餘額</div>
+                <div className={`text-lg font-bold font-mono ${stats && stats.available_cash < 0 ? "text-amber-400" : "text-white"}`}>
+                  {stats ? fmtTwd(stats.available_cash) : "--"}
+                </div>
+                {stats && (
+                  <div className="text-[10px] text-slate-500 mt-0.5">已投入 {fmtTwd(stats.deployed)}</div>
+                )}
+              </div>
+              <div className="px-4">
+                <div className="text-[11px] text-slate-500 mb-1">總權益</div>
+                <div className="text-lg font-bold font-mono text-white">{stats ? fmtTwd(stats.equity) : "--"}</div>
+              </div>
+              <div className="px-4">
+                <div className="text-[11px] text-slate-500 mb-1">報酬率</div>
+                <div className={`text-lg font-bold font-mono ${darkPnl(stats?.return_pct)}`}>
+                  {stats ? `${stats.return_pct > 0 ? "+" : ""}${stats.return_pct}%` : "--"}
+                </div>
+              </div>
+              <div className="px-4">
+                <div className="text-[11px] text-slate-500 mb-1">最大回撤</div>
+                <div className={`text-lg font-bold font-mono ${stats && stats.drawdown_pct < 0 ? "text-green-400" : "text-white"}`}>
+                  {stats ? `${stats.drawdown_pct}%` : "--"}
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* 統計帶（嵌在深色區） */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 divide-x divide-slate-800 border-t border-slate-800">
@@ -353,7 +413,19 @@ export default function PaperTradingPage() {
         )}
       </div>
 
-      {showCreate && <CreateModal onClose={() => { setShowCreate(false); invalidate(); }} />}
+      {showCreate && (
+        <CreateModal
+          initialCapital={stats?.initial_capital ?? null}
+          availableCash={stats?.available_cash ?? null}
+          onClose={() => { setShowCreate(false); invalidate(); }}
+        />
+      )}
+      {showCapital && (
+        <CapitalModal
+          current={stats?.initial_capital ?? null}
+          onClose={() => { setShowCapital(false); invalidate(); }}
+        />
+      )}
       {fillTarget && <FillModal trade={fillTarget} onClose={() => { setFillTarget(null); invalidate(); }} />}
       </div>
     </div>
@@ -362,29 +434,59 @@ export default function PaperTradingPage() {
 
 // ---------- 新增模擬單 Modal ----------
 
-function CreateModal({ onClose }: { onClose: () => void }) {
+function CreateModal({
+  initialCapital,
+  availableCash,
+  onClose,
+}: {
+  initialCapital: number | null;
+  availableCash: number | null;
+  onClose: () => void;
+}) {
   const [form, setForm] = useState({
     stock_code: "", stock_name: "", strategy: "",
     entry_price: "", quantity: "1",
     tp1_price: "", tp1_qty: "", sl1_price: "", sl1_qty: "",
   });
+  const [riskPct, setRiskPct] = useState("2"); // 部位計算器：每筆風險占本金 %
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const SHARES = 1000;
+  const entry = Number(form.entry_price) || 0;
+  const qty = Number(form.quantity) || 0;
+  const sl = Number(form.sl1_price) || 0;
+
+  // 即時風險試算
+  const cost = entry * qty * SHARES;
+  const pctOfCapital = initialCapital && cost > 0 ? (cost / initialCapital) * 100 : null;
+  const hasValidSl = sl > 0 && sl < entry;
+  const slQty = Number(form.sl1_qty) || qty; // SL 張數未填則視為全部
+  const maxLoss = hasValidSl ? (entry - sl) * slQty * SHARES : null;
+  const maxLossPct = maxLoss != null && initialCapital ? (maxLoss / initialCapital) * 100 : null;
+  const overBalance = availableCash != null && cost > availableCash;
+
+  // 部位計算器：依風險% 反推建議張數 = 本金 × 風險% ÷ (進場−停損) ÷ 1000
+  const riskBudget = initialCapital ? initialCapital * (Number(riskPct) / 100) : 0;
+  const suggestedQty =
+    hasValidSl && riskBudget > 0 ? Math.floor(riskBudget / ((entry - sl) * SHARES)) : 0;
 
   const handleSubmit = async () => {
     setError("");
     if (!form.stock_code || !form.entry_price) { setError("請填寫股票代碼與進場價"); return; }
+    if (!form.sl1_price) { setError("請設定停損價（SL）— 模擬交易強制停損，幫你建立進場前先想退場的紀律"); return; }
+    if (sl >= entry) { setError("停損價需低於進場價"); return; }
     const exits: any[] = [];
     if (form.tp1_price && form.tp1_qty) exits.push({ type: "tp", seq: 1, price: Number(form.tp1_price), quantity: Number(form.tp1_qty) });
-    if (form.sl1_price && form.sl1_qty) exits.push({ type: "sl", seq: 1, price: Number(form.sl1_price), quantity: Number(form.sl1_qty) });
+    exits.push({ type: "sl", seq: 1, price: sl, quantity: slQty });
     setSubmitting(true);
     try {
       await api.post("/api/paper-trades/", {
         stock_code: form.stock_code.trim(),
         stock_name: form.stock_name.trim() || null,
         strategy: form.strategy.trim() || null,
-        entry_price: Number(form.entry_price),
-        quantity: Number(form.quantity),
+        entry_price: entry,
+        quantity: qty,
         exits,
       });
       onClose();
@@ -408,7 +510,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-gray-900">新增模擬單</h3>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
@@ -421,16 +523,140 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           {field("張數 *", "quantity", "1", "number")}
           {field("策略標籤", "strategy", "中期極波動")}
           <div />
-          {field("TP1 停利價", "tp1_price", "", "number")}
-          {field("TP1 張數", "tp1_qty", "", "number")}
-          {field("SL1 停損價", "sl1_price", "", "number")}
-          {field("SL1 張數", "sl1_qty", "", "number")}
+          {field("TP1 停利價", "tp1_price", "選填", "number")}
+          {field("TP1 張數", "tp1_qty", "選填", "number")}
+          {field("SL1 停損價 *", "sl1_price", "必填", "number")}
+          {field("SL1 張數", "sl1_qty", "預設全部", "number")}
         </div>
+
+        {/* 部位計算器：依可承受風險反推建議張數 */}
+        {initialCapital != null && (
+          <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3.5">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-700 mb-2">
+              <Calculator className="w-3.5 h-3.5" />部位計算器
+              <span className="font-normal text-indigo-400">— 先想好「最多賠多少」，再決定買幾張</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-600">每筆最多賠本金的</span>
+              <input
+                type="number" value={riskPct} onChange={(e) => setRiskPct(e.target.value)}
+                className="w-16 border border-indigo-300 rounded-lg px-2 py-1 text-sm text-center"
+              />
+              <span className="text-gray-600">%</span>
+              {hasValidSl ? (
+                <span className="ml-auto text-gray-700">
+                  建議 <b className="text-indigo-700">{suggestedQty} 張</b>
+                  {suggestedQty > 0 && (
+                    <button
+                      onClick={() => setForm((f) => ({ ...f, quantity: String(suggestedQty), sl1_qty: String(suggestedQty) }))}
+                      className="ml-2 text-xs px-2 py-0.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                    >套用</button>
+                  )}
+                </span>
+              ) : (
+                <span className="ml-auto text-[11px] text-gray-400">填進場價與停損價後計算</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 即時風險摘要：占本金 / 最大虧損（顯示不強制） */}
+        {(pctOfCapital != null || maxLossPct != null) && (
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-gray-200 p-3">
+              <div className="text-[11px] text-gray-500 mb-0.5">這筆佔本金</div>
+              <div className={`text-lg font-bold font-mono ${pctOfCapital != null && pctOfCapital > 30 ? "text-amber-600" : "text-gray-800"}`}>
+                {pctOfCapital != null ? `${pctOfCapital.toFixed(1)}%` : "--"}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-0.5">成本 {cost > 0 ? fmtTwd(cost) : "--"}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3">
+              <div className="text-[11px] text-gray-500 mb-0.5">觸發停損最大虧損</div>
+              <div className={`text-lg font-bold font-mono ${maxLossPct != null && maxLossPct > 5 ? "text-red-600" : "text-gray-800"}`}>
+                {maxLossPct != null ? `−${maxLossPct.toFixed(1)}%` : "--"}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-0.5">{maxLoss != null ? `約 −${fmtTwd(maxLoss).replace("$", "$")}` : "需填停損價"}</div>
+            </div>
+          </div>
+        )}
+
+        {/* 餘額超限警示（前端提示，後端亦強制） */}
+        {overBalance && (
+          <div className="mt-3 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>進場成本 {fmtTwd(cost)} 超過可用餘額 {fmtTwd(availableCash)}，將無法開倉。請降低張數或調高本金。</span>
+          </div>
+        )}
+
+        <button
+          onClick={handleSubmit} disabled={submitting || overBalance}
+          className="w-full mt-5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-xl transition-colors"
+        >
+          {submitting ? "建立中..." : overBalance ? "超過可用餘額" : "建立模擬單"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 設定本金 Modal ----------
+
+function CapitalModal({ current, onClose }: { current: number | null; onClose: () => void }) {
+  const [value, setValue] = useState(current ? String(current) : "1000000");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const presets = [500000, 1000000, 3000000, 5000000];
+
+  const handleSubmit = async () => {
+    setError("");
+    const capital = Number(value);
+    if (!capital || capital <= 0) { setError("請輸入有效的本金金額"); return; }
+    setSubmitting(true);
+    try {
+      await api.put("/api/paper-trades/account", { initial_capital: capital });
+      onClose();
+    } catch (e: any) {
+      setError(e.response?.data?.detail ?? "設定失敗");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-indigo-600" />設定模擬本金
+          </h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        {error && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error}</div>}
+        <p className="text-xs text-gray-500 mb-3">
+          設定一筆虛擬本金，模擬真實資金的部位配置與風險控管。開倉成本不可超過可用餘額。
+        </p>
+        <div className="flex gap-2 mb-3">
+          {presets.map((p) => (
+            <button
+              key={p} onClick={() => setValue(String(p))}
+              className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${
+                Number(value) === p ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-gray-200 text-gray-600 hover:border-gray-300"
+              }`}
+            >
+              {p / 10000} 萬
+            </button>
+          ))}
+        </div>
+        <input
+          type="number" value={value} onChange={(e) => setValue(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
         <button
           onClick={handleSubmit} disabled={submitting}
-          className="w-full mt-5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white font-medium py-2.5 rounded-xl transition-colors"
+          className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-medium py-2.5 rounded-xl transition-colors"
         >
-          {submitting ? "建立中..." : "建立模擬單"}
+          {submitting ? "儲存中..." : "儲存本金"}
         </button>
       </div>
     </div>

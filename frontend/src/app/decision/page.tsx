@@ -5,6 +5,7 @@ import { useState } from "react";
 import RadarChartComponent from "@/components/decision/RadarChartComponent";
 import ScoreBreakdownCard from "@/components/decision/ScoreBreakdownCard";
 import OperationGuideCard from "@/components/decision/OperationGuideCard";
+import FundamentalCard from "@/components/decision/FundamentalCard";
 import AIAnalysisCard from "@/components/decision/AIAnalysisCard";
 import PageHeader from "@/components/PageHeader";
 import { useScore, useRadar, useSignals } from "@/hooks/useApi";
@@ -134,6 +135,7 @@ export default function DecisionPage() {
         </div>
         <OperationGuideCard
           data={scoreData?.operation ?? null}
+          confidence={scoreData?.confidence ?? null}
           loading={scoreLoading}
         />
       </div>
@@ -159,7 +161,7 @@ export default function DecisionPage() {
           <div className="text-2xl font-bold text-gray-900 mb-1">
             {scoreLoading ? "..." : (scoreData?.chip_score ?? "--")}
           </div>
-          <div className="text-xs text-gray-400">權重 20%</div>
+          <div className="text-xs text-gray-400">權重 30%</div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -170,7 +172,7 @@ export default function DecisionPage() {
           <div className="text-2xl font-bold text-gray-900 mb-1">
             {scoreLoading ? "..." : (scoreData?.sentiment_score ?? "--")}
           </div>
-          <div className="text-xs text-gray-400">權重 15%</div>
+          <div className="text-xs text-gray-400">權重 20%</div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -181,9 +183,16 @@ export default function DecisionPage() {
           <div className="text-2xl font-bold text-gray-900 mb-1">
             {scoreLoading ? "..." : (scoreData?.fundamental_score ?? "--")}
           </div>
-          <div className="text-xs text-gray-400">權重 15%</div>
+          <div className="text-xs text-gray-400">權重 20%</div>
         </div>
       </div>
+
+      {/* 基本面快照（估值與獲利能力） */}
+      {selectedCode && (
+        <div className="mt-6">
+          <FundamentalCard stockCode={selectedCode} />
+        </div>
+      )}
 
       {/* 當前分析結果 */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mt-6">

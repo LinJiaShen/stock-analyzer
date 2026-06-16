@@ -123,6 +123,12 @@ class ScoringService:
         else:
             health_level = "critical"
 
+        # 訊號置信度：多維度是否一致（一致 = 高信度，分歧 = 低信度）
+        confidence = self._build_confidence(
+            total_score,
+            [tech_score, chip_score, fundamental_score, sentiment_score, pattern_norm],
+        )
+
         # 操作建議（ATR 停損 / 壓力位目標 / 風報比）— 不依賴訊號，有價格資料就提供
         operation = None
         if current_price and atr_14:
@@ -131,6 +137,20 @@ class ScoringService:
             risk = current_price - stop_loss
             reward = target - current_price
             rr = round(reward / risk, 1) if risk > 0 else 0
+
+            # 極端情況警示：跌破停損後的延伸風險位
+            if support and support < stop_loss:
+                ext_price = round(support, 1)
+                ext_note = "跌破停損後下一支撐，續弱可能延伸至此"
+            else:
+                ext_price = round(stop_loss - 1.5 * atr_14, 1)
+                ext_note = "停損若失守，依 ATR 估算的延伸風險位"
+            downside_extension = {
+                "price": ext_price,
+                "pct": round((ext_price - current_price) / current_price * 100, 1),
+                "note": ext_note,
+            }
+
             operation = {
                 "entry_note": f"參考進場區間 {round(current_price * 0.99, 1)}–{round(current_price * 1.005, 1)}（現價 {round(current_price, 1)}，依 ATR 波動 {round(atr_14, 1)} 計算）",
                 "stop_loss": stop_loss,
@@ -139,6 +159,7 @@ class ScoringService:
                 "target_pct": round((target - current_price) / current_price * 100, 1),
                 "rr_ratio": rr,
                 "hold_period": "波段（2–4 週）",
+                "downside_extension": downside_extension,
             }
 
         return {
@@ -159,7 +180,47 @@ class ScoringService:
             "resistance": resistance,
             "support": support,
             "operation": operation,
+            "confidence": confidence,
         }
+
+    def _build_confidence(self, total_score: float, dims: list[float]) -> dict:
+        """
+        訊號置信度：衡量各維度評分的「一致程度」。
+
+        - 方向一致性：多數維度與總分同向（同站在 50 上方或下方）
+        - 分歧度：維度分數的標準差越小越一致
+        - 決斷力：總分離中性 50 越遠，訊號越明確
+
+        三者加權成 0–100 的置信度，並轉成 high/medium/low 等級。
+        高分歧（各維度互相矛盾）會壓低置信度，提醒新手此時不宜重押。
+        """
+        valid = [float(d) for d in dims if d is not None]
+        if not valid:
+            return {"level": "low", "score": 0, "reason": "資料不足，無法評估一致性"}
+
+        above = sum(1 for d in valid if d >= 50)
+        below = len(valid) - above
+        agreement = max(above, below) / len(valid)            # 0.5–1.0
+        agreement_norm = (agreement - 0.5) / 0.5               # 0–1
+        spread = float(np.std(valid))                          # 0–~30
+        spread_factor = max(0.0, 1 - spread / 30)              # 1=高度一致
+        decisiveness = min(1.0, abs(total_score - 50) / 50)    # 0–1
+
+        raw = 0.5 * agreement_norm + 0.3 * spread_factor + 0.2 * decisiveness
+        score = round(raw * 100)
+
+        if score >= 66:
+            level = "high"
+        elif score >= 40:
+            level = "medium"
+        else:
+            level = "low"
+
+        same_dir = max(above, below)
+        reason = f"{same_dir}/{len(valid)} 維度同向、分歧度 {spread:.0f} 分"
+        if level == "low":
+            reason += "，各維度訊號矛盾，建議降低部位或觀望"
+        return {"level": level, "score": score, "reason": reason}
 
     def _calculate_atr(self, bars: list[dict], period: int = 14) -> float:
         """計算平均真實波幅 (ATR)；bars 為 dict 格式"""

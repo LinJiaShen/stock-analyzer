@@ -45,9 +45,55 @@ async def test_create_and_list(auth_client):
 async def test_exit_quantity_validation(auth_client):
     res = await auth_client.post("/api/paper-trades/", json={
         "stock_code": "2330", "entry_price": 100.0, "quantity": 1,
-        "exits": [{"type": "tp", "seq": 1, "price": 110.0, "quantity": 5}],
+        "exits": [
+            {"type": "tp", "seq": 1, "price": 110.0, "quantity": 5},
+            {"type": "sl", "seq": 1, "price": 90.0, "quantity": 1},
+        ],
     })
     assert res.status_code == 400  # 出場張數超過進場張數
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_required(auth_client):
+    """強制停損：沒有 SL 計畫應被拒絕"""
+    res = await auth_client.post("/api/paper-trades/", json={
+        "stock_code": "2330", "entry_price": 100.0, "quantity": 1,
+        "exits": [{"type": "tp", "seq": 1, "price": 110.0, "quantity": 1}],
+    })
+    assert res.status_code == 400
+    assert "停損" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_balance_hard_cap(auth_client):
+    """餘額硬上限：進場成本超過本金（預設 100 萬）應被拒絕"""
+    # 1000 元 × 2 張 × 1000 股 = 200 萬 > 預設本金 100 萬
+    res = await auth_client.post("/api/paper-trades/", json={
+        "stock_code": "2330", "entry_price": 1000.0, "quantity": 2,
+        "exits": [{"type": "sl", "seq": 1, "price": 950.0, "quantity": 2}],
+    })
+    assert res.status_code == 400
+    assert "可用餘額" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_account_get_and_update(auth_client):
+    # 預設帳戶 100 萬
+    res = await auth_client.get("/api/paper-trades/account")
+    assert res.status_code == 200
+    assert res.json()["initial_capital"] == 1000000
+
+    # 調整本金
+    res = await auth_client.put("/api/paper-trades/account", json={"initial_capital": 3000000})
+    assert res.status_code == 200
+    assert res.json()["initial_capital"] == 3000000
+
+    # 調本金後可開原本超限的單
+    res = await auth_client.post("/api/paper-trades/", json={
+        "stock_code": "2330", "entry_price": 1000.0, "quantity": 2,
+        "exits": [{"type": "sl", "seq": 1, "price": 950.0, "quantity": 2}],
+    })
+    assert res.status_code == 201
 
 
 @pytest.mark.asyncio
@@ -87,13 +133,14 @@ async def test_fill_exceeding_remaining_rejected(auth_client):
 
 @pytest.mark.asyncio
 async def test_stats(auth_client):
+    sl_only = [{"type": "sl", "seq": 1, "price": 90.0, "quantity": 1}]
     # 一勝：100→110 全平 +10000/張 ×1
-    t1 = await _create_trade(auth_client, quantity=1, exits=[])
+    t1 = await _create_trade(auth_client, quantity=1, exits=sl_only)
     await auth_client.post(f"/api/paper-trades/{t1['id']}/fill", json={
         "type": "manual", "filled_price": 110.0, "quantity": 1,
     })
     # 一敗：100→95 全平 -5000/張 ×1
-    t2 = await _create_trade(auth_client, quantity=1, exits=[])
+    t2 = await _create_trade(auth_client, quantity=1, exits=sl_only)
     await auth_client.post(f"/api/paper-trades/{t2['id']}/fill", json={
         "type": "manual", "filled_price": 95.0, "quantity": 1,
     })

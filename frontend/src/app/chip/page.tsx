@@ -14,6 +14,21 @@ interface ChipDataPoint {
   margin_net: number | null;
 }
 
+interface ForeignAnomaly {
+  enough_data: boolean;
+  foreign_daily_avg?: number;
+  foreign_latest?: number;
+  zscore?: number;
+  volume_abnormal?: boolean;
+  recent_5d_net?: number;
+  prior_5d_net?: number;
+  turning?: string;
+  current_streak?: number;
+  max_streak_in_window?: number;
+  streak_abnormal?: boolean;
+  window_days?: number;
+}
+
 interface DealerFlow {
   foreign_net_buy: number;
   invest_trust_net_buy: number;
@@ -22,6 +37,7 @@ interface DealerFlow {
   invest_trust_consecutive_days: number;
   trend: string;
   signal: string;
+  anomaly?: ForeignAnomaly;
 }
 
 interface MarginTrading {
@@ -361,6 +377,62 @@ export default function ChipPage() {
                 </div>
               </div>
             </div>
+
+            {/* 外資動向細緻化：常態 vs 異常、近期轉折、與均值對比 */}
+            {chipResult.dealer_flow.anomaly?.enough_data && (
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <div className="text-sm font-semibold text-gray-800 mb-3">
+                  外資動向細緻化
+                  <span className="text-xs font-normal text-gray-400 ml-2">
+                    （近 {chipResult.dealer_flow.anomaly.window_days} 個交易日）
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* 連續天數常態 vs 異常 */}
+                  <div className="p-3 rounded-lg border border-gray-200">
+                    <div className="text-xs text-gray-500 mb-1">連續天數判讀</div>
+                    <div className="text-sm text-gray-700">
+                      {chipResult.dealer_flow.anomaly.streak_abnormal ? (
+                        <span className="text-red-600 font-medium">
+                          異常：連{(chipResult.dealer_flow.anomaly.current_streak ?? 0) > 0 ? "買" : "賣"}
+                          {Math.abs(chipResult.dealer_flow.anomaly.current_streak ?? 0)}天，為區間內最長
+                        </span>
+                      ) : (
+                        <span className="text-gray-600">
+                          常態：目前連續天數未達區間極值
+                          （區間最長 {chipResult.dealer_flow.anomaly.max_streak_in_window} 天）
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 近期轉折 */}
+                  <div className="p-3 rounded-lg border border-gray-200">
+                    <div className="text-xs text-gray-500 mb-1">近 5 日轉折</div>
+                    <div className="text-sm font-medium text-gray-800">{chipResult.dealer_flow.anomaly.turning}</div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">
+                      近5日 {formatMoney(chipResult.dealer_flow.anomaly.recent_5d_net ?? 0)}
+                      ・前5日 {formatMoney(chipResult.dealer_flow.anomaly.prior_5d_net ?? 0)}
+                    </div>
+                  </div>
+
+                  {/* 與均值對比 */}
+                  <div className="p-3 rounded-lg border border-gray-200">
+                    <div className="text-xs text-gray-500 mb-1">最新 vs 區間日均</div>
+                    <div className={`text-sm font-medium ${chipResult.dealer_flow.anomaly.volume_abnormal ? "text-red-600" : "text-gray-800"}`}>
+                      {chipResult.dealer_flow.anomaly.volume_abnormal ? "量能異常" : "量能常態"}
+                      <span className="text-xs font-normal text-gray-400 ml-1">
+                        (z={chipResult.dealer_flow.anomaly.zscore})
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">
+                      最新 {formatMoney(chipResult.dealer_flow.anomaly.foreign_latest ?? 0)}
+                      ・日均 {formatMoney(chipResult.dealer_flow.anomaly.foreign_daily_avg ?? 0)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

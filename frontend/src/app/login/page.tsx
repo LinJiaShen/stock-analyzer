@@ -21,8 +21,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Token 由後端透過 HttpOnly Cookie 下發，前端只記錄 username 供 UI 顯示
-      await api.post("/api/auth/login", { username, password });
+      // Cookie（HttpOnly）為主要認證方式；同時把 token 存 localStorage 作為跨裝置 Bearer fallback
+      const res = await api.post("/api/auth/login", { username, password });
+      if (res.data?.access_token) {
+        localStorage.setItem("access_token", res.data.access_token);
+      }
       localStorage.setItem("username", username);
       router.push("/");
     } catch (err: any) {

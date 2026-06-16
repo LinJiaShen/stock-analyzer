@@ -120,6 +120,55 @@ class YahooWorker:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, partial(func, *args))
 
+    async def fetch_fundamentals(self, symbol: str) -> dict | None:
+        """
+        以 yfinance Ticker.info 抓取基本面快照。
+
+        Args:
+            symbol: Yahoo 股票代碼（上市 2330.TW、上櫃 6488.TWO）
+
+        Returns:
+            dict（pe_ratio/forward_pe/pb_ratio/eps/dividend_yield/roe/market_cap），
+            失敗或全為空時回 None。dividend_yield、roe 以 % 為單位。
+        """
+        def _yf_info_sync(sym: str) -> dict:
+            import yfinance as yf
+            return yf.Ticker(sym).info or {}
+
+        try:
+            info = await self._run_sync(_yf_info_sync, symbol)
+        except Exception as e:
+            logger.warning(f"yfinance fundamentals 抓取失敗 {symbol}: {e}")
+            return None
+
+        if not info:
+            return None
+
+        def _num(v):
+            try:
+                return round(float(v), 2) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        div = _num(info.get("dividendYield"))
+        roe = info.get("returnOnEquity")
+        roe_pct = round(float(roe) * 100, 2) if isinstance(roe, (int, float)) else None
+        mc = info.get("marketCap")
+
+        result = {
+            "pe_ratio": _num(info.get("trailingPE")),
+            "forward_pe": _num(info.get("forwardPE")),
+            "pb_ratio": _num(info.get("priceToBook")),
+            "eps": _num(info.get("trailingEps")),
+            "dividend_yield": div,  # 新版 yfinance 已是百分比（如 1.04 = 1.04%）
+            "roe": roe_pct,
+            "market_cap": int(mc) if isinstance(mc, (int, float)) else None,
+        }
+        # 全為 None 視為無資料
+        if all(v is None for v in result.values()):
+            return None
+        return result
+
     async def fetch_kline_yf(
         self, symbol: str, period: str = "3y", interval: str = "1d"
     ) -> list[dict]:

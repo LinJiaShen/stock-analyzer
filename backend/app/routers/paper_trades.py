@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.database import get_db
 from app.models.user import User
 from app.models.paper_trade import PaperTrade
+from app.models.paper_account import PaperAccount, DEFAULT_INITIAL_CAPITAL
 from app.models.daily_bar import DailyBar
 from app.utils.security import get_current_user
 
@@ -56,6 +57,10 @@ class FillRequest(BaseModel):
     quantity: int = Field(..., gt=0, description="張數")
 
 
+class AccountUpdate(BaseModel):
+    initial_capital: float = Field(..., gt=0, description="本金（元）")
+
+
 # ---------- Helpers ----------
 
 async def _latest_close(db: AsyncSession, stock_code: str) -> Optional[float]:
@@ -71,6 +76,44 @@ async def _latest_close(db: AsyncSession, stock_code: str) -> Optional[float]:
     if not bar:
         return None
     return float(bar.adjusted_close or bar.close_price or 0) or None
+
+
+async def _get_or_create_account(db: AsyncSession, user_id) -> PaperAccount:
+    """取得使用者模擬帳戶，不存在則以預設本金建立"""
+    result = await db.execute(
+        select(PaperAccount).where(PaperAccount.user_id == user_id)
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        account = PaperAccount(user_id=user_id, initial_capital=DEFAULT_INITIAL_CAPITAL)
+        db.add(account)
+        await db.commit()
+        await db.refresh(account)
+    return account
+
+
+async def _cash_summary(db: AsyncSession, user_id, initial_capital: float) -> dict:
+    """
+    計算現金面摘要（不需現價）：
+
+    - deployed：未平倉部位佔用的成本（進場價 × 剩餘張數）
+    - realized：所有模擬單已實現損益加總
+    - available：可用餘額 = 本金 + 已實現損益 − 已投入成本
+
+    開倉時以 available 作為硬上限。
+    """
+    result = await db.execute(select(PaperTrade).where(PaperTrade.user_id == user_id))
+    trades = result.scalars().all()
+    realized = sum(float(t.realized_pnl) for t in trades)
+    deployed = sum(
+        float(t.entry_price) * int(t.remaining_quantity) * SHARES_PER_LOT
+        for t in trades if t.status != "closed"
+    )
+    return {
+        "realized": realized,
+        "deployed": deployed,
+        "available": initial_capital + realized - deployed,
+    }
 
 
 def _serialize(trade: PaperTrade, latest_price: Optional[float]) -> dict:
@@ -144,13 +187,31 @@ async def get_stats(
     total_cost = sum(float(t.entry_price) * int(t.quantity) * SHARES_PER_LOT for t in trades)
     realized_total = sum(float(t.realized_pnl) for t in trades)
 
-    # 未實現損益（持倉中的）
+    # 未實現損益（持倉中的）+ 已投入成本（剩餘部位）
     unrealized_total = 0.0
+    deployed = 0.0
     for t in trades:
-        if int(t.remaining_quantity) > 0:
+        remaining = int(t.remaining_quantity)
+        if remaining > 0:
+            deployed += float(t.entry_price) * remaining * SHARES_PER_LOT
             latest = await _latest_close(db, t.stock_code)
             if latest:
-                unrealized_total += (latest - float(t.entry_price)) * int(t.remaining_quantity) * SHARES_PER_LOT
+                unrealized_total += (latest - float(t.entry_price)) * remaining * SHARES_PER_LOT
+
+    # 帳戶面：本金、可用餘額、權益、報酬率、回撤
+    account = await _get_or_create_account(db, current_user.id)
+    initial_capital = float(account.initial_capital)
+    available_cash = initial_capital + realized_total - deployed
+    equity = initial_capital + realized_total + unrealized_total  # 總權益（現金 + 持倉市值）
+    return_pct = round((equity - initial_capital) / initial_capital * 100, 2) if initial_capital else 0
+
+    # 滾動更新權益高點，計算當前回撤
+    prev_peak = float(account.peak_equity) if account.peak_equity else initial_capital
+    peak = max(prev_peak, equity)
+    if peak != prev_peak:
+        account.peak_equity = peak
+        await db.commit()
+    drawdown_pct = round((equity - peak) / peak * 100, 2) if peak else 0  # ≤ 0
 
     return {
         "total_trades": len(trades),
@@ -165,6 +226,59 @@ async def get_stats(
         "realized_pnl": round(realized_total, 0),
         "unrealized_pnl": round(unrealized_total, 0),
         "total_pnl": round(realized_total + unrealized_total, 0),
+        # 帳戶本金面
+        "initial_capital": round(initial_capital, 0),
+        "available_cash": round(available_cash, 0),
+        "deployed": round(deployed, 0),
+        "equity": round(equity, 0),
+        "return_pct": return_pct,
+        "peak_equity": round(peak, 0),
+        "drawdown_pct": drawdown_pct,
+    }
+
+
+@router.get("/account")
+async def get_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """取得模擬帳戶本金設定與可用餘額摘要"""
+    account = await _get_or_create_account(db, current_user.id)
+    initial_capital = float(account.initial_capital)
+    cash = await _cash_summary(db, current_user.id, initial_capital)
+    return {
+        "initial_capital": initial_capital,
+        "available_cash": round(cash["available"], 0),
+        "deployed": round(cash["deployed"], 0),
+        "realized_pnl": round(cash["realized"], 0),
+        "peak_equity": float(account.peak_equity) if account.peak_equity else None,
+    }
+
+
+@router.put("/account")
+async def update_account(
+    data: AccountUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """設定模擬帳戶本金。新本金不可低於已投入的未平倉成本。"""
+    account = await _get_or_create_account(db, current_user.id)
+    cash = await _cash_summary(db, current_user.id, data.initial_capital)
+    if data.initial_capital < cash["deployed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"本金 ${data.initial_capital:,.0f} 低於目前已投入成本 ${cash['deployed']:,.0f}，"
+                   f"請先平倉或設定更高本金",
+        )
+    account.initial_capital = data.initial_capital
+    # 本金變動後重設權益高點基準
+    account.peak_equity = None
+    await db.commit()
+    await db.refresh(account)
+    return {
+        "initial_capital": float(account.initial_capital),
+        "available_cash": round(cash["available"], 0),
+        "deployed": round(cash["deployed"], 0),
     }
 
 
@@ -225,6 +339,13 @@ async def create_paper_trade(
     db: AsyncSession = Depends(get_db),
 ):
     """建立模擬單（進場 + TP/SL 出場計畫）"""
+    # 強制停損：模擬交易必須設定至少一筆 SL，以建立風險紀律
+    if not any(e.type == "sl" for e in data.exits):
+        raise HTTPException(
+            status_code=400,
+            detail="請至少設定一筆停損（SL）— 模擬交易強制停損，幫助你建立「進場前先想好退場」的紀律",
+        )
+
     # TP 與 SL 為替代計畫（OCO），各自加總不可超過進場張數
     tp_qty = sum(e.quantity for e in data.exits if e.type == "tp")
     sl_qty = sum(e.quantity for e in data.exits if e.type == "sl")
@@ -237,6 +358,19 @@ async def create_paper_trade(
         raise HTTPException(
             status_code=400,
             detail=f"停損計畫總張數 ({sl_qty}) 不可超過進場張數 ({data.quantity})"
+        )
+
+    # 餘額硬上限：進場成本不可超過可用餘額
+    account = await _get_or_create_account(db, current_user.id)
+    initial_capital = float(account.initial_capital)
+    cash = await _cash_summary(db, current_user.id, initial_capital)
+    cost = data.entry_price * data.quantity * SHARES_PER_LOT
+    if cost > cash["available"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"進場成本 ${cost:,.0f} 超過可用餘額 ${cash['available']:,.0f}"
+                   f"（本金 ${initial_capital:,.0f}，已投入 ${cash['deployed']:,.0f}）。"
+                   f"請降低張數或調高本金。",
         )
 
     trade = PaperTrade(

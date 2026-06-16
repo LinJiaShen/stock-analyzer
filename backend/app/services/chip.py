@@ -94,6 +94,9 @@ class ChipService:
             trend = "neutral"
             signal = "neutral"
 
+        # 細緻化分析：常態 vs 異常、近期轉折、與區間均值對比
+        anomaly = self._foreign_anomaly(chip_data_list)
+
         return {
             "foreign_net_buy": foreign_net,
             "invest_trust_net_buy": invest_trust_net,
@@ -102,6 +105,85 @@ class ChipService:
             "invest_trust_consecutive_days": invest_trust_consecutive,
             "trend": trend,
             "signal": signal,
+            "anomaly": anomaly,
+        }
+
+    def _foreign_anomaly(self, chip_data_list: list[ChipData]) -> dict:
+        """
+        外資動向細緻化：判斷目前是「常態」還是「異常」。
+
+        - 量能異常：最新一日外資淨額相對區間分布的 z 分數（|z|≥2 視為異常）
+        - 近期轉折：近 5 日 vs 前 5 日淨額方向是否反轉（由買轉賣 / 由賣轉買）
+        - 連續天數異常：目前連續同向天數是否為區間內最長且 ≥ 5 天
+        - 與均值對比：最新一日 vs 區間日均
+        """
+        series = [float(c.foreign_net or 0) for c in chip_data_list]  # 新→舊
+        if len(series) < 10:
+            return {"enough_data": False}
+
+        daily_avg = float(np.mean(series))
+        std = float(np.std(series))
+        latest = series[0]
+        z = round((latest - daily_avg) / std, 1) if std > 0 else 0.0
+
+        recent_5d = sum(series[:5])
+        prior_5d = sum(series[5:10])
+        if recent_5d > 0 and prior_5d < 0:
+            turning = "由賣轉買"
+        elif recent_5d < 0 and prior_5d > 0:
+            turning = "由買轉賣"
+        elif recent_5d > 0:
+            turning = "延續買超"
+        elif recent_5d < 0:
+            turning = "延續賣超"
+        else:
+            turning = "持平"
+
+        # 目前連續同向天數（乾淨計算：遇到反向或 0 即停）
+        cur_streak = 0
+        sign0 = 0
+        for v in series:
+            s = 1 if v > 0 else -1 if v < 0 else 0
+            if s == 0:
+                break
+            if sign0 == 0:
+                sign0 = s
+            if s == sign0:
+                cur_streak += 1
+            else:
+                break
+
+        # 區間內最長連續同向天數
+        max_streak = 0
+        run = 0
+        prev = 0
+        for v in reversed(series):  # 舊→新
+            s = 1 if v > 0 else -1 if v < 0 else 0
+            if s != 0 and s == prev:
+                run += 1
+            elif s != 0:
+                run = 1
+                prev = s
+            else:
+                run = 0
+                prev = 0
+            max_streak = max(max_streak, run)
+
+        streak_abnormal = cur_streak >= 5 and cur_streak >= max_streak
+
+        return {
+            "enough_data": True,
+            "foreign_daily_avg": round(daily_avg),
+            "foreign_latest": round(latest),
+            "zscore": z,
+            "volume_abnormal": abs(z) >= 2,
+            "recent_5d_net": round(recent_5d),
+            "prior_5d_net": round(prior_5d),
+            "turning": turning,
+            "current_streak": cur_streak * (sign0 or 0),
+            "max_streak_in_window": max_streak,
+            "streak_abnormal": streak_abnormal,
+            "window_days": len(series),
         }
 
     async def analyze_margin_trading(self, stock_code: str, days: int = 30) -> dict:
