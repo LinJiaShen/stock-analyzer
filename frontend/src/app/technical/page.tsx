@@ -42,6 +42,12 @@ interface StructureData {
 
 interface TFSig { interval: string; has_data: boolean; trend: number; ma: number; macd: number; rsi: number | null; rsi_zone: string; adx: number | null; adx_regime: string; dir: number; vote: number; }
 interface MTFData { has_data: boolean; verdict: string; verdict_label: string; bias: number; alignment_score: number; narrative: string; timeframes: { day: TFSig; week: TFSig; month: TFSig }; }
+interface RSData {
+  has_data: boolean;
+  vs_index: { available: boolean; rs_line?: number[]; rs_slope?: number; stock_return_pct?: number; index_return_pct?: number; excess_pct?: number; symbol?: string };
+  rs_rating: { available: boolean; value?: number; windows?: Record<string, number>; partial?: boolean };
+  vs_sector: { available: boolean; industry?: string; stock_return_pct?: number; sector_return_pct?: number; diff?: number; outperforming?: boolean };
+}
 
 interface KLineData {
   date: string;
@@ -86,6 +92,7 @@ function TechnicalPageContent() {
   const [technicalResult, setTechnicalResult] = useState<TechnicalResult | null>(null);
   const [structure, setStructure] = useState<StructureData | null>(null);
   const [mtf, setMtf] = useState<MTFData | null>(null);
+  const [rs, setRs] = useState<RSData | null>(null);
   const [showZones, setShowZones] = useState(true);
   const [showTrend, setShowTrend] = useState(true);
   const [interval, setInterval] = useState<"1d" | "1w" | "1mo">("1d");
@@ -144,6 +151,7 @@ function TechnicalPageContent() {
       setTechnicalResult(null);
       setStructure(null);
       setMtf(null);
+      setRs(null);
       setStockName("");
       try {
         // 獲取 K 線數據
@@ -239,6 +247,14 @@ function TechnicalPageContent() {
           setMtf(mtfRes.data?.has_data ? mtfRes.data : null);
         } catch {
           setMtf(null);
+        }
+
+        // 獲取相對強弱（vs 大盤 / 類股）
+        try {
+          const rsRes = await api.get(`/api/analysis/relative-strength/${selectedCode}`);
+          setRs(rsRes.data?.has_data ? rsRes.data : null);
+        } catch {
+          setRs(null);
         }
       } catch (err: any) {
         setError(err.response?.data?.detail || "無法獲取數據，請檢查股票代碼");
@@ -704,6 +720,48 @@ function TechnicalPageContent() {
                 <span className="text-xs text-gray-400 whitespace-nowrap">共振強度</span>
                 <span className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className={`block h-full ${mtf.bias > 0 ? "bg-red-400" : mtf.bias < 0 ? "bg-green-400" : "bg-gray-300"}`} style={{ width: `${mtf.alignment_score}%` }} /></span>
                 <span className="font-mono text-xs text-gray-600">{mtf.alignment_score}</span>
+              </div>
+            </div>
+          )}
+
+          {/* 相對強弱（RS） */}
+          {rs?.has_data && (rs.rs_rating.available || rs.vs_index.available) && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-3"><TrendingUp className="w-5 h-5 text-violet-600" />相對強弱（vs 大盤・類股）</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-center">
+                {rs.rs_rating.available && (
+                  <div className="flex flex-col items-center justify-center">
+                    <div className={`text-5xl font-bold ${(rs.rs_rating.value ?? 50) >= 80 ? "text-red-600" : (rs.rs_rating.value ?? 50) <= 20 ? "text-green-600" : "text-gray-700"}`}>{rs.rs_rating.value}</div>
+                    <div className="text-xs text-gray-500 mt-1">RS 評等（全市場 PR）</div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">{(rs.rs_rating.value ?? 50) >= 80 ? "市場領漲族群" : (rs.rs_rating.value ?? 50) >= 50 ? "強於半數個股" : "相對落後大盤"}</div>
+                  </div>
+                )}
+                {rs.vs_index.available && rs.vs_index.rs_line && rs.vs_index.rs_line.length > 1 && (
+                  <div className="md:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-gray-500">RS 線 vs 加權指數（&gt;100 領先）</span>
+                      <span className={`text-xs font-mono font-medium ${(rs.vs_index.excess_pct ?? 0) >= 0 ? "text-red-600" : "text-green-600"}`}>超額報酬 {(rs.vs_index.excess_pct ?? 0) >= 0 ? "+" : ""}{rs.vs_index.excess_pct}%</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={110} minWidth={0}>
+                      <LineChart data={rs.vs_index.rs_line.map((v, i) => ({ i, rs: v }))}>
+                        <YAxis domain={["auto", "auto"]} hide />
+                        <ReferenceLine y={100} stroke="#cbd5e1" strokeDasharray="3 3" />
+                        <Tooltip contentStyle={{ backgroundColor: "white", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "12px" }} formatter={(value) => [Number(value).toFixed(1), "RS"]} labelFormatter={() => ""} />
+                        <Line type="monotone" dataKey="rs" stroke="#7c3aed" strokeWidth={1.5} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-500">
+                {rs.rs_rating.windows && (["90", "180", "365"] as const).map((w) => rs.rs_rating.windows![w] != null && (
+                  <span key={w}>{w === "90" ? "近3月" : w === "180" ? "近半年" : "近1年"} PR{rs.rs_rating.windows![w]}</span>
+                ))}
+                {rs.vs_sector.available && (
+                  <span className={rs.vs_sector.outperforming ? "text-red-600" : "text-green-600"}>
+                    vs {rs.vs_sector.industry}：{rs.vs_sector.outperforming ? "領先" : "落後"}同業 {(rs.vs_sector.diff ?? 0) >= 0 ? "+" : ""}{rs.vs_sector.diff}%
+                  </span>
+                )}
               </div>
             </div>
           )}

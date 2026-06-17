@@ -80,6 +80,25 @@ async def get_mtf_analysis(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/relative-strength/{stock_code}")
+async def get_relative_strength(
+    stock_code: str,
+    days: int = Query(365, ge=60, le=750, description="RS 線回看天數"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    相對強弱：個股 vs 大盤(^TWII) RS 線、全市場 RS 評等(1-99)、vs 所屬類股。
+
+    強勢股＝持續跑贏大盤與同業；RS 評等高者為市場領漲標的。
+    """
+    from app.services.relative_strength import RelativeStrengthService
+
+    try:
+        return await RelativeStrengthService(db).analyze(stock_code, days)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/chip/{stock_code}")
 async def get_chip_analysis(
     stock_code: str,
