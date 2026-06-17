@@ -9,6 +9,7 @@ from app.services.structure import (
     detect_range_box,
     find_divergences,
     bollinger_features,
+    detect_classic_patterns,
     atr,
 )
 
@@ -145,6 +146,20 @@ def test_bollinger_squeeze():
 
 def test_bollinger_insufficient():
     assert bollinger_features([100, 101, 102]) == {"available": False}
+
+
+# ── detect_classic_patterns ──────────────────────────────────
+def test_classic_double_bottom():
+    # W 形：低1(100) → 高(115) → 低2(101，相近) → 上
+    prices = [120, 116, 112, 108, 104, 100, 104, 108, 112, 115, 112, 108, 104, 101, 104, 108, 112, 116, 120, 124]
+    bars = [_bar(p, p + 1, p - 1, p, 1000, f"d{i}") for i, p in enumerate(prices)]
+    pats = detect_classic_patterns(bars)
+    assert any(p["pattern"] == "double_bottom" and p["kind"] == "bullish" for p in pats)
+
+
+def test_classic_none_on_trend():
+    bars = [_bar(100 + i, 101 + i, 99 + i, 100 + i, 1000, f"d{i}") for i in range(40)]
+    assert detect_classic_patterns(bars) == []
 
 
 # ── atr ──────────────────────────────────────────────────────

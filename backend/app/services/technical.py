@@ -448,54 +448,72 @@ class TechnicalService:
         latest_d = kdj_data["d"][-1] if kdj_data["d"] else None
         latest_j = kdj_data["j"][-1] if kdj_data["j"] else None
 
-        # 評分 (0-100)
-        score = 50  # 基準分
+        # ── T6 子分數 + regime-aware 綜合評分（取代原加總式啟發） ──
+        obv_div = self._obv_divergence(closes, obv_values)
+        obv_trend = "flat"
+        if len(obv_values) >= 20:
+            obv_trend = "up" if obv_values[-1] > obv_values[-20] else ("down" if obv_values[-1] < obv_values[-20] else "flat")
 
-        # MA 排列加分
+        # 趨勢分數（MA 排列 + 趨勢方向 + ADX 方向確認）
+        trend_score = 50
         if ma_alignment["alignment"] == "bullish":
-            score += 20
+            trend_score += 25
         elif ma_alignment["alignment"] == "bearish":
-            score -= 20
-
-        # 趨勢加分
+            trend_score -= 25
         if trend["direction"] in ("up", "strong_up"):
-            score += min(trend["strength"] // 5, 15)
+            trend_score += min(trend["strength"] // 4, 20)
         elif trend["direction"] in ("down", "strong_down"):
-            score -= min(trend["strength"] // 5, 15)
+            trend_score -= min(trend["strength"] // 4, 20)
+        adx_v = adx_data.get("adx")
+        if adx_v and adx_v >= 25:
+            trend_score += 8 if (adx_data.get("plus_di") or 0) > (adx_data.get("minus_di") or 0) else -8
+        trend_score = max(0, min(100, trend_score))
 
-        # RSI 加分
-        if latest_rsi:
-            if 40 < latest_rsi < 60:
-                score += 5  # 中性區
-            elif latest_rsi < 30:
-                score += 10  # 超賣反彈機會
-            elif latest_rsi > 70:
-                score -= 10  # 超買風險
-
-        # MACD 加分
+        # 動能分數（MACD 柱 + RSI 位置 + KD）
+        momentum_score = 50
         if latest_hist and latest_hist > 0:
-            score += 10
+            momentum_score += 15
         elif latest_hist and latest_hist < 0:
-            score -= 10
-
-        # 量能加分
-        if volume["trend"] == "increasing":
-            score += 10
-        elif volume["trend"] == "decreasing":
-            score -= 5
-
-        # ADX 趨勢確認加分（趨勢明確才順勢加減）
-        if adx_data.get("adx") and adx_data["adx"] >= 25:
-            if (adx_data.get("plus_di") or 0) > (adx_data.get("minus_di") or 0):
-                score += 5
+            momentum_score -= 15
+        if latest_rsi:
+            if latest_rsi < 30:
+                momentum_score += 12
+            elif latest_rsi > 70:
+                momentum_score -= 12
+            elif latest_rsi > 50:
+                momentum_score += 6
             else:
-                score -= 5
+                momentum_score -= 3
+        if latest_k is not None and latest_d is not None:
+            momentum_score += 8 if latest_k > latest_d else -8
+        momentum_score = max(0, min(100, momentum_score))
 
-        # OBV 量價背離扣分（價漲量縮）
-        if self._obv_divergence(closes, obv_values) == "bearish":
-            score -= 5
+        # 量能分數（量趨勢 + OBV 趨勢/背離）
+        volume_score = 50
+        if volume["trend"] == "increasing":
+            volume_score += 18
+        elif volume["trend"] == "slightly_increasing":
+            volume_score += 8
+        elif volume["trend"] == "decreasing":
+            volume_score -= 12
+        if obv_trend == "up":
+            volume_score += 10
+        elif obv_trend == "down":
+            volume_score -= 10
+        if obv_div == "bearish":
+            volume_score -= 10
+        elif obv_div == "bullish":
+            volume_score += 8
+        volume_score = max(0, min(100, volume_score))
 
-        score = max(0, min(100, score))
+        # 市場狀態 regime（ADX）→ 動態權重：趨勢市重趨勢分、盤整市重動能分
+        if adx_v and adx_v >= 25:
+            regime, w = "trending", (0.50, 0.30, 0.20)
+        elif adx_v is not None and adx_v < 20:
+            regime, w = "ranging", (0.25, 0.50, 0.25)
+        else:
+            regime, w = "transitional", (0.38, 0.37, 0.25)
+        score = max(0, min(100, round(w[0] * trend_score + w[1] * momentum_score + w[2] * volume_score)))
 
         # 訊號（中文）
         if score >= 80:
@@ -552,6 +570,8 @@ class TechnicalService:
             "has_data": True,
             "score": score,
             "signal": signal,
+            "regime": regime,
+            "sub_scores": {"trend": trend_score, "momentum": momentum_score, "volume": volume_score},
             "ma_alignment": ma_alignment_str,
             "trend": {
                 "direction": trend_direction,

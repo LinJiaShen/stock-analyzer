@@ -38,6 +38,7 @@ interface StructureData {
   range_box?: { top: number; bottom: number } | null;
   divergences?: Divergence[];
   bollinger?: BollingerFeatures;
+  patterns_classic?: { pattern: string; label: string; kind: string; confidence: string; points: { date: string; price: number }[]; neckline?: number }[];
 }
 
 interface TFSig { interval: string; has_data: boolean; trend: number; ma: number; macd: number; rsi: number | null; rsi_zone: string; adx: number | null; adx_regime: string; dir: number; vote: number; }
@@ -92,6 +93,8 @@ interface TechnicalResult {
   plus_di?: number | null;
   minus_di?: number | null;
   obv_trend?: string;
+  regime?: string;
+  sub_scores?: { trend: number; momentum: number; volume: number };
 }
 
 function TechnicalPageContent() {
@@ -245,6 +248,8 @@ function TechnicalPageContent() {
               plus_di: techData.adx?.plus_di ?? null,
               minus_di: techData.adx?.minus_di ?? null,
               obv_trend: techData.obv?.trend ?? "flat",
+              regime: techData.regime,
+              sub_scores: techData.sub_scores,
             });
           }
         } catch {
@@ -508,6 +513,19 @@ function TechnicalPageContent() {
     if (tradePlan.target2) ovs.push({ id: "tp-t2", kind: "hline", price: tradePlan.target2, color: "#ef4444", label: `目標② ${tradePlan.target2}`, dashed: true });
     return ovs;
   }, [tradePlan]);
+
+  // 背離連線（連接兩個擺盪點，搭配背離標記）
+  const divergenceLineOverlays = useMemo((): ChartOverlay[] => {
+    if (!structure?.has_data || !structure.divergences?.length) return [];
+    return structure.divergences.map((d, i) => ({
+      id: `div-line-${i}`,
+      kind: "line" as const,
+      p1: { date: fmtChartDate(d.p1.date), price: d.p1.price },
+      p2: { date: fmtChartDate(d.p2.date), price: d.p2.price },
+      color: d.kind === "bullish" ? "#10b981" : "#ef4444",
+      dashed: true,
+    }));
+  }, [structure]);
 
   // 前端備用技術分析結果 (當 API 無數據時)
   const fallbackTechnicalResult = useMemo((): TechnicalResult => {
@@ -859,7 +877,7 @@ function TechnicalPageContent() {
               <div className="flex items-center gap-4">
                 <div className="text-right">
                   <div className="text-3xl font-bold text-blue-600">{displayResult.score}</div>
-                  <div className="text-xs text-gray-500">綜合評分</div>
+                  <div className="text-xs text-gray-500">綜合評分{displayResult.regime ? `・${displayResult.regime === "trending" ? "趨勢市" : displayResult.regime === "ranging" ? "盤整市" : "轉折"}` : ""}</div>
                 </div>
                 <div
                   className={`px-3 py-1.5 rounded-full text-sm font-medium ${
@@ -898,6 +916,19 @@ function TechnicalPageContent() {
                 <div className="text-sm font-semibold text-gray-900">{displayResult.volume.ratio.toFixed(2)}x</div>
               </div>
             </div>
+            {displayResult.sub_scores && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="text-xs text-gray-400 mb-2">技術子分數（依市場狀態動態加權）</div>
+                <div className="grid grid-cols-3 gap-3">
+                  {([["趨勢", displayResult.sub_scores.trend], ["動能", displayResult.sub_scores.momentum], ["量能", displayResult.sub_scores.volume]] as const).map(([label, val]) => (
+                    <div key={label}>
+                      <div className="flex items-center justify-between mb-1"><span className="text-xs text-gray-600">{label}</span><span className="text-xs font-mono font-semibold text-gray-800">{val}</span></div>
+                      <span className="block h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className={`block h-full ${val >= 60 ? "bg-red-400" : val <= 40 ? "bg-green-400" : "bg-gray-400"}`} style={{ width: `${val}%` }} /></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
       {/* K 線圖 + MA + 技術標註 */}
@@ -968,11 +999,11 @@ function TechnicalPageContent() {
             {tradePlan?.has_data && tradePlan.direction === "long" && <button onClick={() => setShowPlan((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showPlan ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>交易計畫</button>}
           </div>
         )}
-        <CandlestickChart data={klineData} annotations={[...annotations, ...divergenceAnnotations]} overlays={[...structureOverlays, ...(showPlan ? tradePlanOverlays : [])]} height={380} />
+        <CandlestickChart data={klineData} annotations={[...annotations, ...divergenceAnnotations]} overlays={[...structureOverlays, ...divergenceLineOverlays, ...(showPlan ? tradePlanOverlays : [])]} height={380} />
       </div>
 
       {/* 結構分析：支撐壓力區帶 */}
-      {structure?.has_data && (((structure.zones?.length ?? 0) > 0) || structure.range_box) && (
+      {structure?.has_data && (((structure.zones?.length ?? 0) > 0) || structure.range_box || ((structure.patterns_classic?.length ?? 0) > 0)) && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
           <h3 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-blue-500" />結構分析 · 支撐壓力區帶
@@ -996,6 +1027,14 @@ function TechnicalPageContent() {
             })}
             {structure.range_box && (
               <div className="text-xs text-gray-500 pt-2 mt-1 border-t border-gray-100">箱型整理區間：{structure.range_box.bottom} – {structure.range_box.top}</div>
+            )}
+            {(structure.patterns_classic?.length ?? 0) > 0 && (
+              <div className="text-xs pt-2 mt-1 border-t border-gray-100">
+                <span className="text-gray-400">可能型態（低信心，僅供參考）：</span>
+                {structure.patterns_classic!.map((p, i) => (
+                  <span key={i} className={`ml-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${p.kind === "bullish" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{p.label}</span>
+                ))}
+              </div>
             )}
           </div>
         </div>

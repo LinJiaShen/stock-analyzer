@@ -372,6 +372,44 @@ def bollinger_features(closes: list, period: int = 20, std_dev: float = 2.0, bw_
     }
 
 
+def detect_classic_patterns(bars: list[dict], swings: list[dict] | None = None, tol: float = 0.03) -> list[dict]:
+    """古典型態（雙頂/雙底、頭肩頂/底）—— best-effort、低信心，僅供參考、明確標示。"""
+    out: list[dict] = []
+    if swings is None:
+        swings = find_swings(bars)
+    highs = [s for s in swings if s["kind"] == "high"]
+    lows = [s for s in swings if s["kind"] == "low"]
+
+    def pts(arr):
+        return [{"date": s["date"], "price": s["price"]} for s in arr]
+
+    if len(highs) >= 2:
+        a, b = highs[-2], highs[-1]
+        if a["price"] > 0 and abs(a["price"] - b["price"]) / a["price"] <= tol and b["index"] - a["index"] >= 5:
+            between = [l for l in lows if a["index"] < l["index"] < b["index"]]
+            if between:
+                out.append({"pattern": "double_top", "label": "雙頂(M頭)", "kind": "bearish",
+                            "confidence": "low", "points": pts([a, b]), "neckline": round(min(l["price"] for l in between), 2)})
+    if len(lows) >= 2:
+        a, b = lows[-2], lows[-1]
+        if a["price"] > 0 and abs(a["price"] - b["price"]) / a["price"] <= tol and b["index"] - a["index"] >= 5:
+            between = [h for h in highs if a["index"] < h["index"] < b["index"]]
+            if between:
+                out.append({"pattern": "double_bottom", "label": "雙底(W底)", "kind": "bullish",
+                            "confidence": "low", "points": pts([a, b]), "neckline": round(max(h["price"] for h in between), 2)})
+    if len(highs) >= 3:
+        l_, h_, r_ = highs[-3], highs[-2], highs[-1]
+        if h_["price"] > l_["price"] and h_["price"] > r_["price"] and l_["price"] > 0 and abs(l_["price"] - r_["price"]) / l_["price"] <= tol * 1.5:
+            out.append({"pattern": "head_shoulders_top", "label": "頭肩頂", "kind": "bearish",
+                        "confidence": "low", "points": pts([l_, h_, r_])})
+    if len(lows) >= 3:
+        l_, h_, r_ = lows[-3], lows[-2], lows[-1]
+        if h_["price"] < l_["price"] and h_["price"] < r_["price"] and l_["price"] > 0 and abs(l_["price"] - r_["price"]) / l_["price"] <= tol * 1.5:
+            out.append({"pattern": "head_shoulders_bottom", "label": "頭肩底", "kind": "bullish",
+                        "confidence": "low", "points": pts([l_, h_, r_])})
+    return out
+
+
 class StructureService:
     """薄 DB 包裝：抓 bars（adjusted_close）→ 聚合 interval → 跑純函式。"""
 
@@ -411,5 +449,5 @@ class StructureService:
             "range_box": detect_range_box(bars),
             "divergences": find_divergences(bars, rsi, macd_hist, swings),
             "bollinger": bollinger_features(closes),
-            "patterns_classic": [],  # T1.5 best-effort 預留
+            "patterns_classic": detect_classic_patterns(bars, swings),
         }
