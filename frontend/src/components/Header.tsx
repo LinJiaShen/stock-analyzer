@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart,
   TrendingUp,
@@ -22,6 +22,7 @@ import {
   Filter,
   FlaskConical,
   Search,
+  Bell,
 } from "lucide-react";
 import { useIsMarketOpen } from "@/hooks/useIsMarketOpen";
 
@@ -109,6 +110,7 @@ export default function Header() {
         { name: "持倉管理", href: "/holdings", icon: BarChart3 },
         { name: "持倉分析", href: "/holdings/analysis", icon: Activity },
         { name: "追蹤清單", href: "/watchlist", icon: Star },
+        { name: "自訂預警", href: "/alerts", icon: Bell },
         { name: "模擬交易", href: "/paper", icon: FlaskConical },
       ],
     }] : []),
@@ -298,6 +300,9 @@ export default function Header() {
               </span>
             </div>
 
+            {/* 通知鈴鐺 */}
+            {isLoggedIn && <NotificationBell />}
+
             {/* 帳號 */}
             {isLoggedIn ? (
               <div className="flex items-center gap-1">
@@ -326,5 +331,89 @@ export default function Header() {
         </div>
       </div>
     </header>
+  );
+}
+
+interface NotifItem {
+  id: string;
+  type: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
+
+function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const { data } = useQuery<{ notifications: NotifItem[]; unread: number }>({
+    queryKey: ["notifications"],
+    queryFn: async () => {
+      const { api } = await import("@/lib/api");
+      return (await api.get("/api/notifications/")).data;
+    },
+    refetchInterval: 60 * 1000,
+    retry: false,
+  });
+  const unread = data?.unread ?? 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+
+  const toggle = async (e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    const next = !open;
+    setOpen(next);
+    if (next && unread > 0) {
+      const { api } = await import("@/lib/api");
+      await api.post("/api/notifications/read");
+      qc.invalidateQueries({ queryKey: ["notifications"] });
+    }
+  };
+
+  const dotColor = (t: string) =>
+    t === "blocked" ? "bg-amber-400" : t === "fill" ? "bg-blue-400" : "bg-violet-400";
+
+  return (
+    <div className="relative">
+      <button
+        onClick={toggle}
+        title="通知"
+        className="relative p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+      >
+        <Bell className="w-4 h-4" />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center text-[10px] font-bold text-white bg-rose-500 rounded-full">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 top-full mt-1 w-80 bg-slate-800 rounded-lg border border-slate-700 shadow-xl shadow-black/30 z-50 overflow-hidden"
+        >
+          <div className="px-3 py-2 border-b border-slate-700 text-[12px] font-semibold text-slate-300">通知</div>
+          <div className="max-h-80 overflow-y-auto">
+            {!data?.notifications?.length ? (
+              <div className="px-3 py-6 text-center text-[12px] text-slate-500">目前沒有通知</div>
+            ) : (
+              data.notifications.map((n) => (
+                <div key={n.id} className="flex items-start gap-2 px-3 py-2.5 border-b border-slate-700/50 last:border-0">
+                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${dotColor(n.type)}`} />
+                  <div className="min-w-0">
+                    <div className="text-[12px] text-slate-200 leading-snug">{n.message}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{new Date(n.created_at).toLocaleString("zh-TW")}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

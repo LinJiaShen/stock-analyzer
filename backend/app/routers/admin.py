@@ -18,6 +18,8 @@ from app.config import settings
 from worker.stock_list_worker import stock_list_worker, sync_stock_list
 from worker.yahoo_worker import yahoo_worker
 from worker.chip_worker import chip_worker, backfill_chip_data
+from worker.tdcc_worker import fetch_weekly_tdcc
+from worker.monthly_revenue_worker import fetch_monthly_revenue
 from sqlalchemy import select, func
 
 async def get_admin_user():
@@ -36,6 +38,30 @@ class InitResponse(BaseModel):
     status: str
     message: str
     data: Optional[dict] = None
+
+
+@router.post("/sync-tdcc", response_model=InitResponse)
+async def sync_tdcc_endpoint(
+    current_user: Optional[UserResponse] = Depends(get_admin_user),
+):
+    """抓取最新一週 TDCC 集保大戶持股分布（全市場）。"""
+    try:
+        result = await fetch_weekly_tdcc()
+        return InitResponse(status="success", message=f"TDCC 大戶持股同步完成: {result}", data=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync-monthly-revenue", response_model=InitResponse)
+async def sync_monthly_revenue_endpoint(
+    current_user: Optional[UserResponse] = Depends(get_admin_user),
+):
+    """抓取最新月營收（上市 + 上櫃）。"""
+    try:
+        result = await fetch_monthly_revenue()
+        return InitResponse(status="success", message=f"月營收同步完成: {result}", data=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/sync-stocks", response_model=InitResponse)

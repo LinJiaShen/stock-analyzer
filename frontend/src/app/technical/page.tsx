@@ -45,6 +45,10 @@ interface TechnicalResult {
   resistance?: number;
   divergence?: string;
   bollinger_position?: number;
+  adx?: number | null;
+  plus_di?: number | null;
+  minus_di?: number | null;
+  obv_trend?: string;
 }
 
 function TechnicalPageContent() {
@@ -181,6 +185,11 @@ function TechnicalPageContent() {
                 current_volume: techData.volume?.current_volume ?? 0,
                 ratio: techData.volume?.ratio ?? 1,
               },
+              vwap: techData.vwap?.value ?? undefined,
+              adx: techData.adx?.adx ?? null,
+              plus_di: techData.adx?.plus_di ?? null,
+              minus_di: techData.adx?.minus_di ?? null,
+              obv_trend: techData.obv?.trend ?? "flat",
             });
           }
         } catch {
@@ -419,6 +428,55 @@ function TechnicalPageContent() {
       else if (!priceTrend && currentVol > avgVol * 1.2) divergence = "量價背離 (價跌量增)";
     }
 
+    // ADX / DMI (14, Wilder)
+    let adxVal: number | null = null;
+    let plusDI: number | null = null;
+    let minusDI: number | null = null;
+    if (closes.length >= 29) {
+      const pdm: number[] = [], mdm: number[] = [], tr: number[] = [];
+      for (let i = 1; i < closes.length; i++) {
+        const up = highs[i] - highs[i - 1];
+        const dn = lows[i - 1] - lows[i];
+        pdm.push(up > dn && up > 0 ? up : 0);
+        mdm.push(dn > up && dn > 0 ? dn : 0);
+        tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+      }
+      const pp = 14;
+      let atrS = tr.slice(0, pp).reduce((a, b) => a + b, 0);
+      let spS = pdm.slice(0, pp).reduce((a, b) => a + b, 0);
+      let smS = mdm.slice(0, pp).reduce((a, b) => a + b, 0);
+      const dxs: number[] = [];
+      for (let i = pp; i < tr.length; i++) {
+        atrS = atrS - atrS / pp + tr[i];
+        spS = spS - spS / pp + pdm[i];
+        smS = smS - smS / pp + mdm[i];
+        if (atrS === 0) continue;
+        const pdi = (100 * spS) / atrS;
+        const mdi = (100 * smS) / atrS;
+        const den = pdi + mdi;
+        dxs.push(den ? (100 * Math.abs(pdi - mdi)) / den : 0);
+        plusDI = pdi;
+        minusDI = mdi;
+      }
+      if (dxs.length) {
+        let a = dxs.slice(0, pp).reduce((x, y) => x + y, 0) / Math.min(pp, dxs.length);
+        for (const d of dxs.slice(pp)) a = (a * (pp - 1) + d) / pp;
+        adxVal = a;
+      }
+    }
+
+    // OBV 趨勢（近 20 根方向）
+    let obvAcc = 0;
+    const obvSeries: number[] = [0];
+    for (let i = 1; i < closes.length; i++) {
+      if (closes[i] > closes[i - 1]) obvAcc += volumes[i];
+      else if (closes[i] < closes[i - 1]) obvAcc -= volumes[i];
+      obvSeries.push(obvAcc);
+    }
+    const obvTrend = obvSeries.length >= 20
+      ? (obvSeries[obvSeries.length - 1] > obvSeries[obvSeries.length - 20] ? "up" : "down")
+      : "flat";
+
     const score = latestRsi > 50 ? 60 : 40;
 
     return {
@@ -453,6 +511,10 @@ function TechnicalPageContent() {
       resistance: Math.round(resistance * 100) / 100,
       divergence,
       bollinger_position: Math.round(bollingerPosition * 10) / 10,
+      adx: adxVal != null ? Math.round(adxVal * 10) / 10 : null,
+      plus_di: plusDI != null ? Math.round(plusDI * 10) / 10 : null,
+      minus_di: minusDI != null ? Math.round(minusDI * 10) / 10 : null,
+      obv_trend: obvTrend,
     };
   }, [rsiData, macdData, kdjData, klineData]);
 
@@ -930,6 +992,25 @@ function TechnicalPageContent() {
               <div className="p-2 bg-white/60 rounded-lg">
                 <div className="text-xs text-orange-600">VWAP</div>
                 <div className="font-mono font-bold text-orange-700">{displayResult.vwap ?? "-"} 元</div>
+              </div>
+              <div className="p-2 bg-white/60 rounded-lg">
+                <div className="text-xs text-orange-600">ADX (14)</div>
+                <div className="font-mono font-bold text-orange-700">
+                  {displayResult.adx != null ? displayResult.adx : "-"}
+                  {displayResult.adx != null && (
+                    <span className={`ml-1 text-[10px] ${displayResult.adx >= 25 ? "text-rose-600" : "text-gray-400"}`}>
+                      {displayResult.adx >= 25
+                        ? ((displayResult.plus_di ?? 0) > (displayResult.minus_di ?? 0) ? "趨勢↑" : "趨勢↓")
+                        : "盤整"}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="p-2 bg-white/60 rounded-lg">
+                <div className="text-xs text-orange-600">OBV 趨勢</div>
+                <div className={`font-mono font-bold ${displayResult.obv_trend === "up" ? "text-red-600" : displayResult.obv_trend === "down" ? "text-green-600" : "text-gray-500"}`}>
+                  {displayResult.obv_trend === "up" ? "量能流入" : displayResult.obv_trend === "down" ? "量能流出" : "持平"}
+                </div>
               </div>
             </div>
             <p className="text-xs text-orange-600">

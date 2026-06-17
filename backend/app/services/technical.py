@@ -294,6 +294,90 @@ class TechnicalService:
 
         return {"trend": trend, "ratio": round(ratio, 2)}
 
+    def _calculate_vwap(self, bars: list, period: int = 20) -> list:
+        """滾動 N 日成交量加權均價（典型價 = (H+L+C)/3）。法人成本/當沖參考。"""
+        out = [None] * len(bars)
+        for i in range(period - 1, len(bars)):
+            window = bars[i - period + 1:i + 1]
+            vol = sum(b["volume"] for b in window)
+            if vol > 0:
+                pv = sum(((b["high"] + b["low"] + b["close"]) / 3) * b["volume"] for b in window)
+                out[i] = pv / vol
+        return out
+
+    def _calculate_obv(self, bars: list) -> list:
+        """能量潮 OBV：收漲累加量、收跌累減量。"""
+        out = [0.0] * len(bars)
+        for i in range(1, len(bars)):
+            if bars[i]["close"] > bars[i - 1]["close"]:
+                out[i] = out[i - 1] + bars[i]["volume"]
+            elif bars[i]["close"] < bars[i - 1]["close"]:
+                out[i] = out[i - 1] - bars[i]["volume"]
+            else:
+                out[i] = out[i - 1]
+        return out
+
+    def _obv_divergence(self, closes: list, obv: list, window: int = 20) -> str:
+        """量價背離：價漲但 OBV 跌 = bearish；價跌但 OBV 漲 = bullish。"""
+        if len(closes) < window or len(obv) < window:
+            return "none"
+        price_chg = closes[-1] - closes[-window]
+        obv_chg = obv[-1] - obv[-window]
+        if price_chg > 0 and obv_chg < 0:
+            return "bearish"
+        if price_chg < 0 and obv_chg > 0:
+            return "bullish"
+        return "none"
+
+    def _calculate_adx(self, bars: list, period: int = 14) -> dict:
+        """ADX / +DI / -DI（Wilder 平滑）。ADX≥25 趨勢明確、<20 盤整。"""
+        n = len(bars)
+        if n < period * 2 + 1:
+            return {"adx": None, "plus_di": None, "minus_di": None}
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
+        plus_dm = [0.0] * n
+        minus_dm = [0.0] * n
+        tr = [0.0] * n
+        for i in range(1, n):
+            up = highs[i] - highs[i - 1]
+            down = lows[i - 1] - lows[i]
+            plus_dm[i] = up if (up > down and up > 0) else 0.0
+            minus_dm[i] = down if (down > up and down > 0) else 0.0
+            tr[i] = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+
+        atr = sum(tr[1:period + 1])
+        sp = sum(plus_dm[1:period + 1])
+        sm = sum(minus_dm[1:period + 1])
+        dx_list = []
+        plus_di_last = minus_di_last = None
+        for i in range(period + 1, n):
+            atr = atr - atr / period + tr[i]
+            sp = sp - sp / period + plus_dm[i]
+            sm = sm - sm / period + minus_dm[i]
+            if atr == 0:
+                continue
+            plus_di = 100 * sp / atr
+            minus_di = 100 * sm / atr
+            denom = plus_di + minus_di
+            dx_list.append(100 * abs(plus_di - minus_di) / denom if denom else 0.0)
+            plus_di_last, minus_di_last = plus_di, minus_di
+
+        if not dx_list:
+            return {"adx": None, "plus_di": None, "minus_di": None}
+        if len(dx_list) <= period:
+            adx = sum(dx_list) / len(dx_list)
+        else:
+            adx = sum(dx_list[:period]) / period
+            for d in dx_list[period:]:
+                adx = (adx * (period - 1) + d) / period
+        return {
+            "adx": round(adx, 1),
+            "plus_di": round(plus_di_last, 1) if plus_di_last is not None else None,
+            "minus_di": round(minus_di_last, 1) if minus_di_last is not None else None,
+        }
+
     async def analyze(
         self, stock_code: str, period: str = "medium", interval: str = "1d"
     ) -> dict:
@@ -346,6 +430,9 @@ class TechnicalService:
         macd_data = self._calculate_macd(closes)
         kdj_data = self._calculate_kdj(bars)
         boll_data = self._calculate_bollinger(closes)
+        vwap_values = self._calculate_vwap(bars, 20)
+        obv_values = self._calculate_obv(bars)
+        adx_data = self._calculate_adx(bars)
 
         # 分析
         ma_alignment = self._analyze_ma_alignment(ma_data, closes)
@@ -397,6 +484,17 @@ class TechnicalService:
         elif volume["trend"] == "decreasing":
             score -= 5
 
+        # ADX 趨勢確認加分（趨勢明確才順勢加減）
+        if adx_data.get("adx") and adx_data["adx"] >= 25:
+            if (adx_data.get("plus_di") or 0) > (adx_data.get("minus_di") or 0):
+                score += 5
+            else:
+                score -= 5
+
+        # OBV 量價背離扣分（價漲量縮）
+        if self._obv_divergence(closes, obv_values) == "bearish":
+            score -= 5
+
         score = max(0, min(100, score))
 
         # 訊號（中文）
@@ -435,6 +533,17 @@ class TechnicalService:
 
         interval_label = {"1d": "日線", "1w": "週線", "1mo": "月線"}.get(interval, interval)
 
+        # VWAP / OBV / ADX 衍生
+        latest_vwap = next((v for v in reversed(vwap_values) if v is not None), None)
+        latest_obv = obv_values[-1] if obv_values else 0.0
+        obv_div = self._obv_divergence(closes, obv_values)
+        obv_trend = "flat"
+        if len(obv_values) >= 20:
+            obv_trend = "up" if obv_values[-1] > obv_values[-20] else "down" if obv_values[-1] < obv_values[-20] else "flat"
+        if adx_data.get("adx") is not None:
+            adx_data["strength"] = "trending" if adx_data["adx"] >= 25 else ("ranging" if adx_data["adx"] < 20 else "developing")
+            adx_data["direction"] = "bullish" if (adx_data.get("plus_di") or 0) > (adx_data.get("minus_di") or 0) else "bearish"
+
         return {
             "stock_code": stock_code,
             "period": period,
@@ -469,6 +578,16 @@ class TechnicalService:
                 "current_volume": round(current_vol, 0),
                 "ratio": vol_ratio,
             },
+            "vwap": {
+                "value": round(latest_vwap, 2) if latest_vwap else None,
+                "position": (("above" if closes[-1] > latest_vwap else "below") if latest_vwap else None),
+            },
+            "obv": {
+                "value": round(latest_obv, 0),
+                "divergence": obv_div,
+                "trend": obv_trend,
+            },
+            "adx": adx_data,
             "bars_count": len(bars),
         }
 

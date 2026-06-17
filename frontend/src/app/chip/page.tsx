@@ -48,10 +48,14 @@ interface MarginTrading {
 }
 
 interface Concentration {
-  concentration_ratio: number;
+  concentration_ratio: number | null;
   large_holder_trend: string;
-  retail_ratio: number;
+  retail_ratio: number | null;
   signal: string;
+  big_holder_ratio?: number;   // 千張大戶持股 %（TDCC）
+  big_holder_change?: number;  // 週變化（百分點）
+  week_date?: string;
+  source?: string;             // tdcc / proxy / none
 }
 
 interface ChipAnalysisResult {
@@ -189,6 +193,12 @@ export default function ChipPage() {
     return map[trend] || trend;
   };
 
+  // 千張大戶持股 %（TDCC 真資料優先；否則用舊集中度比例代理）
+  const concPct = (c: Concentration) =>
+    c.big_holder_ratio ?? (c.concentration_ratio != null ? c.concentration_ratio * 100 : null);
+  const retailPct = (c: Concentration) => (c.retail_ratio != null ? c.retail_ratio * 100 : null);
+  const pctText = (v: number | null | undefined) => (v != null ? `${v.toFixed(0)}%` : "--");
+
   // 計算近 5 日加總
   const recent5Summary = useMemo(() => {
     if (chipData.length === 0) return null;
@@ -316,27 +326,34 @@ export default function ChipPage() {
               </div>
             </div>
 
-            {/* 籌碼集中度 */}
+            {/* 籌碼集中度（TDCC 千張大戶持股比） */}
             <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
-              <div className="text-xs text-gray-500 mb-2">籌碼集中度</div>
-              <div className="text-2xl font-bold text-purple-600 mb-1">
-                {(chipResult.concentration.concentration_ratio * 100).toFixed(0)}%
+              <div className="text-xs text-gray-500 mb-2">
+                {chipResult.concentration.source === "tdcc" ? "千張大戶持股" : "籌碼集中度"}
               </div>
-              <div className="text-xs text-gray-500">大戶持倉比</div>
+              <div className="text-2xl font-bold text-purple-600 mb-1">
+                {pctText(concPct(chipResult.concentration))}
+              </div>
+              <div className="text-xs text-gray-500">
+                {chipResult.concentration.source === "tdcc" ? "集保 ≥1000 張" : "大戶持倉比"}
+              </div>
               <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-purple-50 text-purple-700">
                 {largeHolderTrendText(chipResult.concentration.large_holder_trend)}
+                {chipResult.concentration.source === "tdcc" && chipResult.concentration.big_holder_change != null
+                  ? `（週${chipResult.concentration.big_holder_change >= 0 ? "+" : ""}${chipResult.concentration.big_holder_change}pp）`
+                  : ""}
               </div>
             </div>
 
-            {/* 散戶比例 */}
+            {/* 非大戶比例 */}
             <div className="bg-white rounded-xl p-4 shadow-sm border border-green-100">
-              <div className="text-xs text-gray-500 mb-2">散戶比例</div>
+              <div className="text-xs text-gray-500 mb-2">非大戶比例</div>
               <div className="text-2xl font-bold text-red-600 mb-1">
-                {(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
+                {pctText(retailPct(chipResult.concentration))}
               </div>
-              <div className="text-xs text-gray-500">散戶持倉比</div>
+              <div className="text-xs text-gray-500">散戶 / 中實戶</div>
               <div className="mt-2 px-2 py-1 rounded text-xs font-medium bg-red-50 text-red-700">
-                {chipResult.concentration.retail_ratio > 0.4 ? "偏高" : "正常"}
+                {(retailPct(chipResult.concentration) ?? 0) > 40 ? "偏高" : "正常"}
               </div>
             </div>
           </div>
@@ -372,8 +389,11 @@ export default function ChipPage() {
                 <div className="text-sm font-medium text-purple-700 mb-2">籌碼集中度參考</div>
                 <div className="text-sm text-gray-700">
                   大戶{largeHolderTrendText(chipResult.concentration.large_holder_trend)}，
-                  散戶比例{(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
-                  {chipResult.concentration.retail_ratio > 0.4 ? "，注意散戶追高風險" : "，籌碼結構健康"}
+                  非大戶比例{pctText(retailPct(chipResult.concentration))}
+                  {(retailPct(chipResult.concentration) ?? 0) > 40 ? "，注意散戶追高風險" : "，籌碼結構健康"}
+                  {chipResult.concentration.source === "tdcc" && chipResult.concentration.week_date
+                    ? `（集保 ${chipResult.concentration.week_date}）`
+                    : ""}
                 </div>
               </div>
             </div>
@@ -536,19 +556,24 @@ export default function ChipPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
                   <div className="text-3xl font-bold text-blue-600 mb-1">
-                    {(chipResult.concentration.concentration_ratio * 100).toFixed(0)}%
+                    {pctText(concPct(chipResult.concentration))}
                   </div>
-                  <div className="text-sm text-gray-500">大戶集中度</div>
+                  <div className="text-sm text-gray-500">
+                    {chipResult.concentration.source === "tdcc" ? "千張大戶持股比" : "大戶集中度"}
+                  </div>
                   <div className="text-xs text-green-600 mt-1">
                     {largeHolderTrendText(chipResult.concentration.large_holder_trend)}
+                    {chipResult.concentration.source === "tdcc" && chipResult.concentration.big_holder_change != null
+                      ? `　週${chipResult.concentration.big_holder_change >= 0 ? "+" : ""}${chipResult.concentration.big_holder_change}pp`
+                      : ""}
                   </div>
                 </div>
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
                   <div className="text-3xl font-bold text-orange-600 mb-1">
-                    {(chipResult.concentration.retail_ratio * 100).toFixed(0)}%
+                    {pctText(retailPct(chipResult.concentration))}
                   </div>
-                  <div className="text-sm text-gray-500">散戶比例</div>
-                  <div className="text-xs text-gray-500 mt-1">持倉分散度</div>
+                  <div className="text-sm text-gray-500">非大戶比例</div>
+                  <div className="text-xs text-gray-500 mt-1">{chipResult.concentration.source === "tdcc" ? "集保資料" : "持倉分散度"}</div>
                 </div>
                 <div className="text-center p-4 bg-gray-50 rounded-lg">
                   <div className="text-3xl font-bold text-green-600 mb-1">

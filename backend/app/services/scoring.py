@@ -256,21 +256,28 @@ class ScoringService:
         )
         result = await self.db.execute(stmt)
         bars = result.scalars().all()
+        closes = [float(b.close_price) for b in bars if b.close_price]
 
-        # 價值分數 (基於 PE/PB 相對位置，這裡用簡化版本)
+        # 價值分數：以真實 PE/PB 評估（stock_fundamentals），無則退回價格位置代理
+        from app.models.stock_fundamental import StockFundamental
         value_score = 50
-        if bars:
-            # 用價格相對位置作為價值代理
-            closes = [float(b.close_price) for b in bars if b.close_price]
-            if len(closes) >= 60:
-                current_price = closes[-1]
-                avg_price = np.mean(closes)
-                if current_price < avg_price * 0.9:
-                    value_score = 70  # 低於均價，相對便宜
-                elif current_price > avg_price * 1.1:
-                    value_score = 30  # 高於均價，相對貴
-                else:
-                    value_score = 50
+        fund = (await self.db.execute(
+            select(StockFundamental).where(StockFundamental.stock_code == stock_code)
+        )).scalar_one_or_none()
+        if fund and fund.pe_ratio and float(fund.pe_ratio) > 0:
+            pe = float(fund.pe_ratio)
+            value_score = 85 if pe <= 10 else 72 if pe <= 15 else 60 if pe <= 20 else 45 if pe <= 30 else 30
+            if fund.pb_ratio:
+                pb = float(fund.pb_ratio)
+                if pb < 1:
+                    value_score = min(100, value_score + 10)
+                elif pb < 1.5:
+                    value_score = min(100, value_score + 5)
+                elif pb > 5:
+                    value_score = max(0, value_score - 10)
+        elif len(closes) >= 60:
+            cur, avg = closes[-1], float(np.mean(closes))
+            value_score = 70 if cur < avg * 0.9 else 30 if cur > avg * 1.1 else 50
 
         # 動能分數 (基於技術分析)
         momentum_score = technical.get("score", 50)
@@ -278,27 +285,27 @@ class ScoringService:
         # 籌碼分數
         chip_score = chip.get("score", 50)
 
-        # 成長分數 (基於營收成長，這裡用成交量成長作為代理)
+        # 成長分數：以真實月營收 YoY 評估，無則退回成交量成長代理
+        from app.models.monthly_revenue import StockMonthlyRevenue
         growth_score = 50
-        if len(bars) >= 60:
+        rev = (await self.db.execute(
+            select(StockMonthlyRevenue)
+            .where(StockMonthlyRevenue.stock_code == stock_code)
+            .order_by(StockMonthlyRevenue.revenue_month.desc()).limit(1)
+        )).scalar_one_or_none()
+        if rev and rev.yoy_pct is not None:
+            yoy = float(rev.yoy_pct)
+            growth_score = 90 if yoy >= 30 else 75 if yoy >= 15 else 62 if yoy >= 5 else 50 if yoy >= -5 else 38 if yoy >= -15 else 25
+        elif len(bars) >= 60:
             recent_volume = np.mean([b.volume or 0 for b in bars[-20:]])
             old_volume = np.mean([b.volume or 0 for b in bars[-60:-40]])
             if old_volume > 0:
-                volume_growth = recent_volume / old_volume
-                if volume_growth > 1.5:
-                    growth_score = 80
-                elif volume_growth > 1.2:
-                    growth_score = 65
-                elif volume_growth < 0.5:
-                    growth_score = 30
-                elif volume_growth < 0.8:
-                    growth_score = 40
-                else:
-                    growth_score = 50
+                vg = recent_volume / old_volume
+                growth_score = 80 if vg > 1.5 else 65 if vg > 1.2 else 30 if vg < 0.5 else 40 if vg < 0.8 else 50
 
-        # 抗跌分數 (基於下跌時的跌幅控制)
+        # 抗跌分數 (基於最大回撤，真實價格計算)
         resistance_score = 50
-        if len(bars) >= 60:
+        if len(closes) >= 60:
             # 計算最大回撤
             peak = max(closes)
             trough = min(closes)

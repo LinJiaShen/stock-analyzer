@@ -139,6 +139,45 @@ class IndustryService:
             "signal": signal,
         }
 
+    async def _industry_returns(self, days: int = 30) -> dict:
+        """各產業平均報酬（市場寬度，Redis 快取 1 小時）。回傳 {industry: avg_return_pct}。"""
+        from sqlalchemy import text
+        from app.utils.cache import Cache
+
+        cache = Cache()
+        cache_key = f"industry_returns:{days}"
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        cutoff = (datetime.now() - timedelta(days=days)).date()
+        sql = text("""
+            WITH latest AS (
+                SELECT DISTINCT ON (stock_code) stock_code,
+                       COALESCE(adjusted_close, close_price) AS px
+                FROM daily_bars ORDER BY stock_code, trade_date DESC
+            ),
+            base AS (
+                SELECT DISTINCT ON (stock_code) stock_code,
+                       COALESCE(adjusted_close, close_price) AS px
+                FROM daily_bars WHERE trade_date >= :cutoff
+                ORDER BY stock_code, trade_date ASC
+            )
+            SELECT s.industry_name AS industry,
+                   avg((l.px - b.px) / NULLIF(b.px, 0) * 100) AS avg_ret,
+                   count(*) AS n
+            FROM latest l
+            JOIN base b ON l.stock_code = b.stock_code
+            JOIN stocks s ON s.code = l.stock_code
+            WHERE s.industry_name IS NOT NULL AND s.industry_name <> ''
+            GROUP BY s.industry_name
+            HAVING count(*) >= 3
+        """)
+        rows = (await self.db.execute(sql, {"cutoff": cutoff})).all()
+        result = {r.industry: round(float(r.avg_ret), 2) for r in rows if r.avg_ret is not None}
+        await cache.set(cache_key, result, expire=3600)
+        return result
+
     async def analyze_upstream_downstream(self, stock_code: str) -> dict:
         """
         上下游產業鏈分析
@@ -162,30 +201,72 @@ class IndustryService:
         else:
             position = "unknown"
 
+        # 傳導效應：比較上游 vs 下游產業近期平均報酬（真資料）
+        ind_returns = await self._industry_returns()
+        up_ret = [ind_returns[i] for i in upstream if i in ind_returns]
+        down_ret = [ind_returns[i] for i in downstream if i in ind_returns]
+        up_avg = sum(up_ret) / len(up_ret) if up_ret else None
+        down_avg = sum(down_ret) / len(down_ret) if down_ret else None
+        if up_avg is not None and down_avg is not None:
+            diff = down_avg - up_avg
+            transmission = "demand_pull" if diff > 1 else "cost_pressure" if diff < -1 else "balanced"
+        else:
+            transmission = "unknown"
+
         return {
             "upstream_industries": upstream,
             "downstream_industries": downstream,
             "chain_position": position,
-            "transmission_effect": "neutral",
+            "transmission_effect": transmission,
+            "upstream_return": round(up_avg, 2) if up_avg is not None else None,
+            "downstream_return": round(down_avg, 2) if down_avg is not None else None,
         }
 
     async def analyze_rotation(self, stock_code: str, days: int = 30) -> dict:
         """
-        產業輪動分析
-        - 當前熱門產業
-        - 資金流向
-        - 輪動階段判斷
+        產業輪動分析（以全市場各產業平均報酬排名，真資料）
+        - 熱門 / 冷門產業
+        - 該股所屬產業的相對位置與資金流向
         """
         industry = await self._get_stock_industry(stock_code)
+        ind_returns = await self._industry_returns(days)
+        if not ind_returns:
+            return {
+                "current_industry": industry, "rotation_phase": "unknown",
+                "hot_industries": [], "cold_industries": [],
+                "capital_flow": "neutral", "signal": "neutral",
+            }
 
-        # 簡化版本：回傳基本輪動資訊
+        ranked = sorted(ind_returns.items(), key=lambda kv: kv[1], reverse=True)
+        hot = [{"industry": k, "return": v} for k, v in ranked[:5]]
+        cold = [{"industry": k, "return": v} for k, v in ranked[-5:]]
+        market_avg = round(sum(ind_returns.values()) / len(ind_returns), 2)
+        my_ret = ind_returns.get(industry)
+
+        if my_ret is None:
+            phase, signal, capital_flow = "unknown", "neutral", "neutral"
+        else:
+            names = [k for k, _ in ranked]
+            pct_rank = 1 - names.index(industry) / max(1, len(names) - 1)  # 1=最強
+            if my_ret > market_avg and pct_rank >= 0.7:
+                phase, signal = "leading", "bullish"
+            elif my_ret > market_avg:
+                phase, signal = "advancing", "bullish"
+            elif pct_rank <= 0.3:
+                phase, signal = "lagging", "bearish"
+            else:
+                phase, signal = "neutral", "neutral"
+            capital_flow = "inflow" if my_ret > market_avg else "outflow" if my_ret < market_avg else "neutral"
+
         return {
             "current_industry": industry,
-            "rotation_phase": "mid_cycle",
-            "hot_industries": [],
-            "cold_industries": [],
-            "capital_flow": "neutral",
-            "signal": "neutral",
+            "industry_return": my_ret,
+            "market_avg_return": market_avg,
+            "rotation_phase": phase,
+            "hot_industries": hot,
+            "cold_industries": cold,
+            "capital_flow": capital_flow,
+            "signal": signal,
         }
 
     async def analyze(self, stock_code: str, days: int = 30) -> dict:

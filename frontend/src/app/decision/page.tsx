@@ -6,6 +6,7 @@ import RadarChartComponent from "@/components/decision/RadarChartComponent";
 import ScoreBreakdownCard from "@/components/decision/ScoreBreakdownCard";
 import OperationGuideCard from "@/components/decision/OperationGuideCard";
 import FundamentalCard from "@/components/decision/FundamentalCard";
+import MonthlyRevenueCard from "@/components/decision/MonthlyRevenueCard";
 import AIAnalysisCard from "@/components/decision/AIAnalysisCard";
 import PageHeader from "@/components/PageHeader";
 import { useScore, useRadar, useSignals } from "@/hooks/useApi";
@@ -187,10 +188,11 @@ export default function DecisionPage() {
         </div>
       </div>
 
-      {/* 基本面快照（估值與獲利能力） */}
+      {/* 基本面快照（估值與獲利能力）+ 月營收 */}
       {selectedCode && (
-        <div className="mt-6">
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <FundamentalCard stockCode={selectedCode} />
+          <MonthlyRevenueCard stockCode={selectedCode} />
         </div>
       )}
 

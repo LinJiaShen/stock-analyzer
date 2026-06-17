@@ -42,6 +42,8 @@ class PaperTrade(Base):
     realized_pnl = Column(Numeric(14, 0), nullable=False, default=0)  # 元
 
     note = Column(Text, nullable=True)
+    # AI 開倉時的決策快照（評分分項/總分/ATR/風報比/信度），供事後檢討「為何買這檔」
+    decision_snapshot = Column(JSONB, nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=sql_func.now())
 

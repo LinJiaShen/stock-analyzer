@@ -136,5 +136,9 @@ class TDCCHolderData(Base):
     # 關聯
     stock = relationship("Stock", backref="tdcc_holder_data")
 
+    __table_args__ = (
+        UniqueConstraint("stock_code", "week_date", name="uq_tdcc_code_week"),
+    )
+
     def __repr__(self):
         return f"<TDCCHolderData(stock='{self.stock_code}', week='{self.week_date}')>"

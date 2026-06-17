@@ -232,19 +232,51 @@ class ChipService:
     async def analyze_concentration(self, stock_code: str, days: int = 90) -> dict:
         """
         籌碼集中度分析
-        - 法人合計動向作為大戶代理指標
-        - 籌碼集中度估算
+
+        優先用 TDCC 集保「千張大戶持股比」真實資料（含週變化）；
+        若無 TDCC 資料則退回法人合計動向作為大戶代理（精度較低，標 source=proxy）。
         """
+        from app.models.daily_bar import TDCCHolderData
+
+        tdcc = (await self.db.execute(
+            select(TDCCHolderData)
+            .where(TDCCHolderData.stock_code == stock_code)
+            .order_by(desc(TDCCHolderData.week_date))
+            .limit(2)
+        )).scalars().all()
+
+        if tdcc:
+            latest = tdcc[0]
+            big_ratio = float(latest.holder_1000_ratio or 0)  # 千張大戶持股比 (0-1)
+            prev_ratio = float(tdcc[1].holder_1000_ratio or 0) if len(tdcc) > 1 else None
+            change = (big_ratio - prev_ratio) if prev_ratio is not None else 0.0
+            if change > 0.001:
+                large_holder_trend, signal = "accumulating", "bullish"
+            elif change < -0.001:
+                large_holder_trend, signal = "distributing", "bearish"
+            else:
+                large_holder_trend, signal = "stable", "neutral"
+            return {
+                "concentration_ratio": round(big_ratio, 4),
+                "big_holder_ratio": round(big_ratio * 100, 2),   # 千張大戶持股 %
+                "big_holder_change": round(change * 100, 2),      # 週變化（百分點）
+                "large_holder_trend": large_holder_trend,
+                "retail_ratio": round(max(0.0, 1 - big_ratio), 4),
+                "week_date": latest.week_date.isoformat(),
+                "source": "tdcc",
+                "signal": signal,
+            }
+
+        # Fallback：無 TDCC 時以法人合計動向代理（不杜撰集中度數字）
         chip_data_list = await self._fetch_chip_data(stock_code, days)
         if not chip_data_list or len(chip_data_list) < 20:
             return {
-                "concentration_ratio": 0,
+                "concentration_ratio": None,
                 "large_holder_trend": "neutral",
-                "retail_ratio": 0,
+                "retail_ratio": None,
+                "source": "none",
                 "signal": "neutral",
             }
-
-        # 以法人（外資 + 投信）合計淨買進作為大戶動向代理指標
         recent_institutional = sum(
             float(chip.foreign_net or 0) + float(chip.trust_net or 0)
             for chip in chip_data_list[:10]
@@ -253,24 +285,17 @@ class ChipService:
             float(chip.foreign_net or 0) + float(chip.trust_net or 0)
             for chip in chip_data_list[20:30]
         ) if len(chip_data_list) >= 30 else 0
-
         if recent_institutional > 0 and recent_institutional > older_institutional:
-            large_holder_trend = "accumulating"
-            signal = "bullish"
-            concentration_ratio = 1.3
+            large_holder_trend, signal = "accumulating", "bullish"
         elif recent_institutional < 0:
-            large_holder_trend = "distributing"
-            signal = "bearish"
-            concentration_ratio = 0.7
+            large_holder_trend, signal = "distributing", "bearish"
         else:
-            large_holder_trend = "stable"
-            signal = "neutral"
-            concentration_ratio = 1.0
-
+            large_holder_trend, signal = "stable", "neutral"
         return {
-            "concentration_ratio": concentration_ratio,
+            "concentration_ratio": None,
             "large_holder_trend": large_holder_trend,
-            "retail_ratio": 1 / (concentration_ratio + 1),
+            "retail_ratio": None,
+            "source": "proxy",
             "signal": signal,
         }
 

@@ -848,6 +848,68 @@ async def get_chip_data(
     )
 
 
+@router.get("/{stock_code}/tdcc")
+async def get_tdcc_holders(
+    stock_code: str,
+    weeks: int = Query(12, ge=1, le=52, description="回看週數"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    集保大戶持股比（千張 / 400 張）近 N 週趨勢 + 週變化。
+    資料來源: TDCC OpenData（每週更新，由 worker 抓取）。
+    """
+    rows = (await db.execute(
+        select(TDCCHolderData)
+        .where(TDCCHolderData.stock_code == stock_code)
+        .order_by(TDCCHolderData.week_date.desc())
+        .limit(weeks)
+    )).scalars().all()
+    series = [
+        {
+            "week_date": r.week_date.isoformat(),
+            "big_400_ratio": round(float(r.holder_400_ratio or 0) * 100, 2),
+            "big_1000_ratio": round(float(r.holder_1000_ratio or 0) * 100, 2),
+            "big_1000_count": int(r.holder_1000_count or 0),
+        }
+        for r in reversed(rows)  # 舊 → 新
+    ]
+    latest = series[-1] if series else None
+    prev = series[-2] if len(series) >= 2 else None
+    weekly_change = round(latest["big_1000_ratio"] - prev["big_1000_ratio"], 2) if (latest and prev) else None
+    return {"stock_code": stock_code, "series": series, "latest": latest, "weekly_change": weekly_change}
+
+
+@router.get("/{stock_code}/revenue")
+async def get_monthly_revenue(
+    stock_code: str,
+    months: int = Query(24, ge=1, le=60, description="回看月數"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    月營收（YoY/MoM/累計年增率）近 N 月趨勢。
+    資料來源: TWSE/TPEx MOPS（每月 10 號前公布，由 worker 抓取）。單位：千元。
+    """
+    from app.models.monthly_revenue import StockMonthlyRevenue
+
+    rows = (await db.execute(
+        select(StockMonthlyRevenue)
+        .where(StockMonthlyRevenue.stock_code == stock_code)
+        .order_by(StockMonthlyRevenue.revenue_month.desc())
+        .limit(months)
+    )).scalars().all()
+    series = [
+        {
+            "month": r.revenue_month.isoformat()[:7],
+            "revenue": int(r.revenue) if r.revenue is not None else None,
+            "yoy_pct": float(r.yoy_pct) if r.yoy_pct is not None else None,
+            "mom_pct": float(r.mom_pct) if r.mom_pct is not None else None,
+            "cum_yoy_pct": float(r.cum_yoy_pct) if r.cum_yoy_pct is not None else None,
+        }
+        for r in reversed(rows)  # 舊 → 新
+    ]
+    return {"stock_code": stock_code, "series": series, "latest": series[-1] if series else None}
+
+
 def _valuation_hints(f: dict) -> dict:
     """
     依當下可得指標產生白話估值判讀（不杜撰歷史均值）。

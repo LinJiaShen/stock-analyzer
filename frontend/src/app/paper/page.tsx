@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FlaskConical, Plus, Trash2, X, CheckCircle2, Sparkles, RefreshCw, Wallet, Pencil, Calculator, AlertTriangle } from "lucide-react";
+import { FlaskConical, Plus, Trash2, X, CheckCircle2, Sparkles, RefreshCw, Wallet, Pencil, Calculator, AlertTriangle, Settings, LineChart, Info } from "lucide-react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -15,6 +15,23 @@ interface ExitRecord {
   filled_price?: number;
 }
 
+interface DecisionSnapshot {
+  total?: number;
+  technical?: number;
+  chip?: number;
+  fundamental?: number;
+  sentiment?: number;
+  pattern?: number;
+  atr_14?: number | null;
+  rr_ratio?: number;
+  target?: number;
+  stop_loss?: number;
+  confidence?: string;
+  health?: string;
+  entry?: number;
+  decided_at?: string;
+}
+
 interface PaperTrade {
   id: string;
   strategy: string | null;
@@ -24,7 +41,7 @@ interface PaperTrade {
   entry_price: number;
   quantity: number;
   exits: ExitRecord[];
-  status: "open" | "partial" | "closed";
+  status: "open" | "partial" | "closed" | "proposed";
   remaining_quantity: number;
   latest_price: number | null;
   realized_pnl: number;
@@ -34,12 +51,14 @@ interface PaperTrade {
   total_pnl: number;
   total_pnl_pct: number;
   total_cost: number;
+  decision_snapshot?: DecisionSnapshot | null;
 }
 
 interface Stats {
   total_trades: number;
   open_trades: number;
   closed_trades: number;
+  proposed_trades: number;
   win_rate: number;
   rr_ratio: number | null;
   ev: number;
@@ -55,12 +74,41 @@ interface Stats {
   return_pct: number;
   peak_equity: number;
   drawdown_pct: number;
+  // P1 進階績效
+  profit_factor: number | null;
+  max_consecutive_losses: number;
+  avg_hold_days: number | null;
+  largest_win: number;
+  largest_loss: number;
+  sharpe: number | null;
+  sortino: number | null;
+  max_drawdown_pct: number | null;
+  equity_curve: { date: string; equity: number }[];
 }
+
+interface Settings {
+  auto_trade_mode: "off" | "semi" | "auto";
+  fee_discount: number;
+  risk_per_trade_pct: number;
+  max_position_pct: number;
+  max_total_exposure_pct: number;
+  daily_loss_limit_pct: number;
+  max_consecutive_losses: number;
+  max_positions: number;
+  initial_capital: number;
+}
+
+const MODE_LABELS: Record<string, { label: string; cls: string }> = {
+  off: { label: "手動（AI 不自動下單）", cls: "bg-slate-700 text-slate-200" },
+  semi: { label: "半自動（AI 出單・人確認）", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/40" },
+  auto: { label: "全自動（全權交給 AI）", cls: "bg-violet-500/20 text-violet-200 border border-violet-500/40" },
+};
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   open: { label: "持倉中", cls: "bg-blue-100 text-blue-700" },
   partial: { label: "部分平倉", cls: "bg-yellow-100 text-yellow-700" },
   closed: { label: "已平倉", cls: "bg-gray-100 text-gray-600" },
+  proposed: { label: "AI 建議", cls: "bg-violet-100 text-violet-700" },
 };
 
 const pnlColor = (v: number | null | undefined) => {
@@ -87,10 +135,18 @@ export default function PaperTradingPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showCapital, setShowCapital] = useState(false);
   const [fillTarget, setFillTarget] = useState<PaperTrade | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [decisionTarget, setDecisionTarget] = useState<PaperTrade | null>(null);
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ["paper-stats"],
     queryFn: async () => (await api.get("/api/paper-trades/stats")).data,
+    retry: false,
+  });
+
+  const { data: settings } = useQuery<Settings>({
+    queryKey: ["paper-settings"],
+    queryFn: async () => (await api.get("/api/paper-trades/settings")).data,
     retry: false,
   });
 
@@ -103,10 +159,17 @@ export default function PaperTradingPage() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["paper-trades"] });
     queryClient.invalidateQueries({ queryKey: ["paper-stats"] });
+    queryClient.invalidateQueries({ queryKey: ["paper-settings"] });
   };
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => api.delete(`/api/paper-trades/${id}`),
+    onSuccess: invalidate,
+  });
+
+  // 半自動：確認 AI 建議單（proposed → open）
+  const confirmMutation = useMutation({
+    mutationFn: async (id: string) => api.post(`/api/paper-trades/${id}/confirm`),
     onSuccess: invalidate,
   });
 
@@ -151,6 +214,11 @@ export default function PaperTradingPage() {
     { label: "總投入成本", value: stats ? `$${(stats.total_cost / 1000).toFixed(0)}K` : "--", color: "text-white" },
     { label: "已實現損益", value: stats ? fmtMoney(stats.realized_pnl) : "--", color: darkPnl(stats?.realized_pnl) },
     { label: "總損益（含未實現）", value: stats ? fmtMoney(stats.total_pnl) : "--", color: darkPnl(stats?.total_pnl) },
+    { label: "獲利因子", value: stats?.profit_factor != null ? stats.profit_factor.toFixed(2) : "--", color: "text-white" },
+    { label: "最大連敗", value: stats ? `${stats.max_consecutive_losses} 次` : "--", color: "text-white" },
+    { label: "平均持有", value: stats?.avg_hold_days != null ? `${stats.avg_hold_days} 天` : "--", color: "text-white" },
+    { label: "夏普值", value: stats?.sharpe != null ? stats.sharpe.toFixed(2) : "--", color: "text-white" },
+    { label: "Sortino", value: stats?.sortino != null ? stats.sortino.toFixed(2) : "--", color: "text-white" },
   ];
 
   return (
@@ -167,8 +235,31 @@ export default function PaperTradingPage() {
               <p className="text-[13px] text-slate-400 mt-1.5">
                 用虛擬資金驗證進出場計畫，建立紀律再投入真金
               </p>
+              <button
+                onClick={() => setShowSettings(true)}
+                className={`mt-2.5 inline-flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded-full transition-colors ${MODE_LABELS[settings?.auto_trade_mode ?? "off"].cls}`}
+                title="點擊調整自動交易模式"
+              >
+                <Sparkles className="w-3 h-3" />
+                自動交易：{MODE_LABELS[settings?.auto_trade_mode ?? "off"].label}
+              </button>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              <Link
+                href="/paper/backtest"
+                className="flex items-center gap-1.5 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white text-sm font-medium px-3.5 py-2 rounded-lg transition-colors"
+              >
+                <LineChart className="w-4 h-4" />
+                回測
+              </Link>
+              <button
+                onClick={() => setShowSettings(true)}
+                title="自動交易模式、費率、風控設定"
+                className="flex items-center gap-1.5 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white text-sm font-medium px-3.5 py-2 rounded-lg transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+                設定
+              </button>
               <button
                 onClick={() => checkTriggersMutation.mutate()}
                 disabled={checkTriggersMutation.isPending}
@@ -268,6 +359,7 @@ export default function PaperTradingPage() {
           { key: "open", label: "持倉中" },
           { key: "partial", label: "部分平倉" },
           { key: "closed", label: "已平倉" },
+          { key: "proposed", label: "AI 建議" },
         ].map((f) => (
           <button
             key={f.key}
@@ -328,6 +420,14 @@ export default function PaperTradingPage() {
                         {t.strategy && (
                           <div className="text-[10px] text-purple-500 mt-0.5">{t.strategy}</div>
                         )}
+                        {t.decision_snapshot && (
+                          <button
+                            onClick={() => setDecisionTarget(t)}
+                            className="mt-0.5 inline-flex items-center gap-0.5 text-[10px] text-indigo-500 hover:text-indigo-700"
+                          >
+                            <Info className="w-3 h-3" />決策依據
+                          </button>
+                        )}
                       </td>
                       <td className="text-right py-3 px-3">
                         <div className="font-mono">{t.entry_price.toFixed(2)}</div>
@@ -386,7 +486,15 @@ export default function PaperTradingPage() {
                       </td>
                       <td className="py-3 px-2">
                         <div className="flex gap-1">
-                          {t.status !== "closed" && (
+                          {t.status === "proposed" ? (
+                            <button
+                              onClick={() => confirmMutation.mutate(t.id)}
+                              className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg"
+                              title="確認開倉（AI 建議 → 持倉）"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                          ) : t.status !== "closed" ? (
                             <button
                               onClick={() => setFillTarget(t)}
                               className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg"
@@ -394,11 +502,11 @@ export default function PaperTradingPage() {
                             >
                               <CheckCircle2 className="w-4 h-4" />
                             </button>
-                          )}
+                          ) : null}
                           <button
                             onClick={() => deleteMutation.mutate(t.id)}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
-                            title="刪除"
+                            title={t.status === "proposed" ? "拒絕此建議" : "刪除"}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -427,6 +535,8 @@ export default function PaperTradingPage() {
         />
       )}
       {fillTarget && <FillModal trade={fillTarget} onClose={() => { setFillTarget(null); invalidate(); }} />}
+      {showSettings && <SettingsModal onClose={() => { setShowSettings(false); invalidate(); }} />}
+      {decisionTarget && <DecisionModal trade={decisionTarget} onClose={() => setDecisionTarget(null)} />}
       </div>
     </div>
   );
@@ -741,6 +851,196 @@ function FillModal({ trade, onClose }: { trade: PaperTrade; onClose: () => void 
         >
           {submitting ? "記錄中..." : "確認出場"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 自動交易設定 Modal ----------
+
+function SettingsModal({ onClose }: { onClose: () => void }) {
+  const { data: s } = useQuery<Settings>({
+    queryKey: ["paper-settings"],
+    queryFn: async () => (await api.get("/api/paper-trades/settings")).data,
+  });
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-violet-600" />自動交易設定
+          </h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        {!s ? (
+          <div className="py-12 text-center">
+            <div className="w-7 h-7 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          </div>
+        ) : (
+          <SettingsForm initial={s} onClose={onClose} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsForm({ initial, onClose }: { initial: Settings; onClose: () => void }) {
+  const [mode, setMode] = useState<"off" | "semi" | "auto">(initial.auto_trade_mode);
+  const [form, setForm] = useState({
+    fee_discount: String(initial.fee_discount),
+    risk_per_trade_pct: String(initial.risk_per_trade_pct),
+    max_position_pct: String(initial.max_position_pct),
+    max_total_exposure_pct: String(initial.max_total_exposure_pct),
+    daily_loss_limit_pct: String(initial.daily_loss_limit_pct),
+    max_consecutive_losses: String(initial.max_consecutive_losses),
+    max_positions: String(initial.max_positions),
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const MODES: { key: "off" | "semi" | "auto"; title: string; desc: string }[] = [
+    { key: "off", title: "手動", desc: "AI 不自動下單，由你自己建立模擬單。" },
+    { key: "semi", title: "半自動", desc: "AI 每日選股出「建議單」，等你按「確認」才進場。" },
+    { key: "auto", title: "全自動", desc: "全權交給 AI：每交易日 09:15 自動選股、依風控自動進出場。" },
+  ];
+
+  const numField = (label: string, key: keyof typeof form, suffix = "") => (
+    <div>
+      <label className="text-xs text-gray-500 mb-1 block">{label}</label>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number" value={form[key]}
+          onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+        />
+        {suffix && <span className="text-xs text-gray-400 w-4">{suffix}</span>}
+      </div>
+    </div>
+  );
+
+  const handleSubmit = async () => {
+    setError("");
+    setSubmitting(true);
+    try {
+      await api.put("/api/paper-trades/settings", {
+        auto_trade_mode: mode,
+        fee_discount: Number(form.fee_discount),
+        risk_per_trade_pct: Number(form.risk_per_trade_pct),
+        max_position_pct: Number(form.max_position_pct),
+        max_total_exposure_pct: Number(form.max_total_exposure_pct),
+        daily_loss_limit_pct: Number(form.daily_loss_limit_pct),
+        max_consecutive_losses: Number(form.max_consecutive_losses),
+        max_positions: Number(form.max_positions),
+      });
+      onClose();
+    } catch (e) {
+      setError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "儲存失敗");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      {error && <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{error}</div>}
+
+      <div className="mb-2 text-xs font-semibold text-gray-700">交易模式</div>
+      <div className="grid grid-cols-3 gap-2 mb-1">
+        {MODES.map((m) => (
+          <button
+            key={m.key} onClick={() => setMode(m.key)}
+            className={`p-2.5 rounded-xl border text-center transition-colors ${mode === m.key ? "border-violet-500 bg-violet-50" : "border-gray-200 hover:border-gray-300"}`}
+          >
+            <div className={`text-sm font-bold ${mode === m.key ? "text-violet-700" : "text-gray-700"}`}>{m.title}</div>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-500 mb-4 min-h-[28px]">{MODES.find((m) => m.key === mode)?.desc}</p>
+      {mode === "auto" && (
+        <div className="mb-4 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-700">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>全自動會自動進出場。建議先用「回測」與「半自動」確認策略表現，再開啟。</span>
+        </div>
+      )}
+
+      <div className="mb-2 text-xs font-semibold text-gray-700">風控與成本</div>
+      <div className="grid grid-cols-2 gap-3">
+        {numField("券商手續費折數", "fee_discount", "×")}
+        {numField("每筆風險占本金", "risk_per_trade_pct", "%")}
+        {numField("單一持股上限", "max_position_pct", "%")}
+        {numField("總曝險上限", "max_total_exposure_pct", "%")}
+        {numField("每日虧損熔斷", "daily_loss_limit_pct", "%")}
+        {numField("連敗暫停門檻", "max_consecutive_losses", "次")}
+        {numField("最多同時持倉", "max_positions", "檔")}
+      </div>
+
+      <button
+        onClick={handleSubmit} disabled={submitting}
+        className="w-full mt-5 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white font-medium py-2.5 rounded-xl transition-colors"
+      >
+        {submitting ? "儲存中..." : "儲存設定"}
+      </button>
+    </>
+  );
+}
+
+// ---------- AI 決策依據 Modal ----------
+
+function DecisionModal({ trade, onClose }: { trade: PaperTrade; onClose: () => void }) {
+  const d = trade.decision_snapshot ?? {};
+  const fmt = (v?: number | null) => (v == null ? "--" : String(v));
+  const scoreRows: [string, number | undefined][] = [
+    ["綜合評分", d.total],
+    ["技術面", d.technical],
+    ["籌碼面", d.chip],
+    ["基本面", d.fundamental],
+    ["情緒面", d.sentiment],
+    ["K 線形態", d.pattern],
+  ];
+  const params: [string, string][] = [
+    ["進場", fmt(d.entry)],
+    ["停損", fmt(d.stop_loss)],
+    ["目標", fmt(d.target)],
+    ["風報比", d.rr_ratio != null ? `1:${d.rr_ratio}` : "--"],
+    ["ATR", fmt(d.atr_14)],
+    ["信度", d.confidence ?? "--"],
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-violet-600" />決策依據
+          </h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">
+          {trade.stock_code} {trade.stock_name ?? ""}
+          {d.decided_at ? ` · AI 於 ${new Date(d.decided_at).toLocaleString("zh-TW")} 開倉` : ""}
+        </p>
+
+        <div className="text-xs font-semibold text-gray-700 mb-2">進場評分快照</div>
+        <div className="space-y-1.5 mb-4">
+          {scoreRows.map(([label, val]) => (
+            <div key={label} className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 w-16 flex-shrink-0">{label}</span>
+              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-violet-500" style={{ width: `${Math.max(0, Math.min(100, val ?? 0))}%` }} />
+              </div>
+              <span className="text-xs font-mono text-gray-700 w-9 text-right">{fmt(val)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="text-xs font-semibold text-gray-700 mb-2">操作參數</div>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {params.map(([label, val]) => (
+            <div key={label} className="rounded-lg border border-gray-200 p-2">
+              <div className="text-[10px] text-gray-400">{label}</div>
+              <div className="text-sm font-mono font-bold text-gray-800">{val}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -9,7 +9,7 @@
 """
 import uuid
 
-from sqlalchemy import Column, Numeric, DateTime, ForeignKey
+from sqlalchemy import Column, Numeric, DateTime, ForeignKey, String, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func as sql_func
 from sqlalchemy.orm import relationship
@@ -35,6 +35,20 @@ class PaperAccount(Base):
     initial_capital = Column(Numeric(16, 0), nullable=False, default=DEFAULT_INITIAL_CAPITAL)
     # 權益高點（元）— 用於計算最大回撤，由 stats 端點滾動更新
     peak_equity = Column(Numeric(16, 0), nullable=True)
+
+    # 券商手續費折數（1.0 = 無折扣，0.6 = 6 折），用於計算交易成本
+    fee_discount = Column(Numeric(4, 3), nullable=False, default=1.0, server_default="1.0")
+
+    # 自動交易模式：off（停用）/ semi（AI 出單、人確認）/ auto（全權交給 AI）
+    auto_trade_mode = Column(String(10), nullable=False, default="off", server_default="off")
+
+    # 風控參數（皆可於 UI 調整）
+    risk_per_trade_pct = Column(Numeric(5, 2), nullable=False, default=2.0, server_default="2.0")          # 每筆風險占本金 %
+    max_position_pct = Column(Numeric(5, 2), nullable=False, default=20.0, server_default="20.0")          # 單一持股上限（% 權益）
+    max_total_exposure_pct = Column(Numeric(5, 2), nullable=False, default=100.0, server_default="100.0")  # 總曝險上限（% 權益）
+    daily_loss_limit_pct = Column(Numeric(5, 2), nullable=False, default=3.0, server_default="3.0")        # 每日虧損熔斷 %
+    max_consecutive_losses = Column(Integer, nullable=False, default=5, server_default="5")                # 連敗暫停當日開倉門檻
+    max_positions = Column(Integer, nullable=False, default=5, server_default="5")                         # 最多同時持倉數
 
     created_at = Column(DateTime(timezone=True), server_default=sql_func.now())
     updated_at = Column(DateTime(timezone=True), server_default=sql_func.now(), onupdate=sql_func.now())

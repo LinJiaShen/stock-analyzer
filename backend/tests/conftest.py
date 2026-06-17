@@ -9,6 +9,11 @@ pytest fixtures — 測試資料庫、HTTP client、測試使用者
 """
 import os
 
+# 測試環境強制清空 Cookie domain：容器 .env 可能設了 COOKIE_DOMAIN=.tstock.uk（跨 subdomain
+# 正式設定），會讓 secure cookie 綁到該網域，httpx 測試 client（host=test、http）收不到 auth
+# cookie 而一律 401。必須在 import app 之前覆蓋環境變數（settings 於 import 時建構並 lru_cache）。
+os.environ["COOKIE_DOMAIN"] = ""
+
 # 容器內 host 為 db；本機執行設 TEST_DB_HOST=localhost
 _DB_HOST = os.environ.get("TEST_DB_HOST", "db")
 TEST_DATABASE_URL = f"postgresql+asyncpg://postgres:postgres@{_DB_HOST}:5432/test_stock_analyzer"
