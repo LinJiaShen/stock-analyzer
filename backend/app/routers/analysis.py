@@ -99,6 +99,24 @@ async def get_relative_strength(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/trade-plan/{stock_code}")
+async def get_trade_plan(
+    stock_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    交易劇本：彙整多週期共振 + 結構支撐壓力 + 相對強弱 + 背離 →
+    方向 / setup / 進場區 / 結構式停損 / 目標 / 風報比 / 信心 / 失效 / 建議張數，
+    並附 paper_prefill 可一鍵帶入模擬單。
+    """
+    from app.services.trade_plan import TradePlanService
+
+    try:
+        return await TradePlanService(db).analyze(stock_code)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/chip/{stock_code}")
 async def get_chip_analysis(
     stock_code: str,

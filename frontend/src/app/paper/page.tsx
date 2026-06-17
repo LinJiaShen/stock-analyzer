@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FlaskConical, Plus, Trash2, X, CheckCircle2, Sparkles, RefreshCw, Wallet, Pencil, Calculator, AlertTriangle, Settings, LineChart, Info } from "lucide-react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -129,6 +129,9 @@ const fmtTwd = (v: number | null | undefined) => {
   return `$${v.toFixed(0)}`;
 };
 
+interface PrefillExit { type: string; seq: number; price: number; quantity: number; }
+interface TradePrefill { stock_code?: string; entry_price?: number; quantity?: number; exits?: PrefillExit[]; }
+
 export default function PaperTradingPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("all");
@@ -137,6 +140,19 @@ export default function PaperTradingPage() {
   const [fillTarget, setFillTarget] = useState<PaperTrade | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<PaperTrade | null>(null);
+  const [prefill, setPrefill] = useState<TradePrefill | null>(null);
+
+  // 由技術頁「以此開模擬單」帶入的劇本（sessionStorage 交接）
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("paper_prefill");
+      if (raw) {
+        setPrefill(JSON.parse(raw));
+        setShowCreate(true);
+        sessionStorage.removeItem("paper_prefill");
+      }
+    } catch { /* ignore malformed prefill */ }
+  }, []);
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ["paper-stats"],
@@ -525,7 +541,8 @@ export default function PaperTradingPage() {
         <CreateModal
           initialCapital={stats?.initial_capital ?? null}
           availableCash={stats?.available_cash ?? null}
-          onClose={() => { setShowCreate(false); invalidate(); }}
+          initial={prefill}
+          onClose={() => { setShowCreate(false); setPrefill(null); invalidate(); }}
         />
       )}
       {showCapital && (
@@ -547,16 +564,24 @@ export default function PaperTradingPage() {
 function CreateModal({
   initialCapital,
   availableCash,
+  initial,
   onClose,
 }: {
   initialCapital: number | null;
   availableCash: number | null;
+  initial?: TradePrefill | null;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState({
-    stock_code: "", stock_name: "", strategy: "",
-    entry_price: "", quantity: "1",
-    tp1_price: "", tp1_qty: "", sl1_price: "", sl1_qty: "",
+  const [form, setForm] = useState(() => {
+    const tp = initial?.exits?.find((e) => e.type === "tp" && e.seq === 1);
+    const sl = initial?.exits?.find((e) => e.type === "sl");
+    return {
+      stock_code: initial?.stock_code ?? "", stock_name: "", strategy: initial ? "技術劇本" : "",
+      entry_price: initial?.entry_price != null ? String(initial.entry_price) : "",
+      quantity: initial?.quantity != null ? String(initial.quantity) : "1",
+      tp1_price: tp ? String(tp.price) : "", tp1_qty: tp ? String(tp.quantity) : "",
+      sl1_price: sl ? String(sl.price) : "", sl1_qty: sl ? String(sl.quantity) : "",
+    };
   });
   const [riskPct, setRiskPct] = useState("2"); // 部位計算器：每筆風險占本金 %
   const [submitting, setSubmitting] = useState(false);

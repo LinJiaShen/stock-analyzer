@@ -1,7 +1,7 @@
 "use client";
 
-import { Search, TrendingUp, Loader2, Wifi, WifiOff } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { Search, TrendingUp, Loader2, Wifi, WifiOff, Target, FlaskConical } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import {
   ComposedChart,
@@ -48,6 +48,20 @@ interface RSData {
   rs_rating: { available: boolean; value?: number; windows?: Record<string, number>; partial?: boolean };
   vs_sector: { available: boolean; industry?: string; stock_return_pct?: number; sector_return_pct?: number; diff?: number; outperforming?: boolean };
 }
+interface TradePrefill { stock_code: string; entry_price: number; quantity: number; exits: { type: string; seq: number; price: number; quantity: number }[]; }
+interface TradePlanData {
+  has_data: boolean;
+  direction: "long" | "short" | "stand_aside";
+  verdict_label?: string; setup_type?: string;
+  entry_zone?: [number, number]; entry_mid?: number;
+  stop?: number; stop_basis?: string; stop_pct?: number;
+  target1?: number; target2?: number; rr?: number | null;
+  confidence?: { score: number; level: string };
+  rs_rating?: number | null;
+  invalidation?: { price: number; note: string };
+  suggested_lots?: number; narrative?: string;
+  paper_prefill?: TradePrefill | null;
+}
 
 interface KLineData {
   date: string;
@@ -82,6 +96,7 @@ interface TechnicalResult {
 
 function TechnicalPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const codeFromUrl = searchParams.get("code");
   const [searchCode, setSearchCode] = useState(codeFromUrl || "2330");
   const [selectedCode, setSelectedCode] = useState(codeFromUrl || "2330");
@@ -93,6 +108,8 @@ function TechnicalPageContent() {
   const [structure, setStructure] = useState<StructureData | null>(null);
   const [mtf, setMtf] = useState<MTFData | null>(null);
   const [rs, setRs] = useState<RSData | null>(null);
+  const [tradePlan, setTradePlan] = useState<TradePlanData | null>(null);
+  const [showPlan, setShowPlan] = useState(true);
   const [showZones, setShowZones] = useState(true);
   const [showTrend, setShowTrend] = useState(true);
   const [interval, setInterval] = useState<"1d" | "1w" | "1mo">("1d");
@@ -152,6 +169,7 @@ function TechnicalPageContent() {
       setStructure(null);
       setMtf(null);
       setRs(null);
+      setTradePlan(null);
       setStockName("");
       try {
         // 獲取 K 線數據
@@ -255,6 +273,14 @@ function TechnicalPageContent() {
           setRs(rsRes.data?.has_data ? rsRes.data : null);
         } catch {
           setRs(null);
+        }
+
+        // 獲取交易劇本（彙整各層）
+        try {
+          const tpRes = await api.get(`/api/analysis/trade-plan/${selectedCode}`);
+          setTradePlan(tpRes.data?.has_data ? tpRes.data : null);
+        } catch {
+          setTradePlan(null);
         }
       } catch (err: any) {
         setError(err.response?.data?.detail || "無法獲取數據，請檢查股票代碼");
@@ -471,6 +497,17 @@ function TechnicalPageContent() {
       };
     });
   }, [structure]);
+
+  // 交易劇本的進場/停損/目標水平線
+  const tradePlanOverlays = useMemo((): ChartOverlay[] => {
+    if (!tradePlan?.has_data || tradePlan.direction !== "long") return [];
+    const ovs: ChartOverlay[] = [];
+    if (tradePlan.entry_mid) ovs.push({ id: "tp-entry", kind: "hline", price: tradePlan.entry_mid, color: "#3b82f6", label: `進場 ${tradePlan.entry_mid}`, dashed: true });
+    if (tradePlan.stop) ovs.push({ id: "tp-stop", kind: "hline", price: tradePlan.stop, color: "#16a34a", label: `停損 ${tradePlan.stop}` });
+    if (tradePlan.target1) ovs.push({ id: "tp-t1", kind: "hline", price: tradePlan.target1, color: "#ef4444", label: `目標① ${tradePlan.target1}` });
+    if (tradePlan.target2) ovs.push({ id: "tp-t2", kind: "hline", price: tradePlan.target2, color: "#ef4444", label: `目標② ${tradePlan.target2}`, dashed: true });
+    return ovs;
+  }, [tradePlan]);
 
   // 前端備用技術分析結果 (當 API 無數據時)
   const fallbackTechnicalResult = useMemo((): TechnicalResult => {
@@ -766,6 +803,52 @@ function TechnicalPageContent() {
             </div>
           )}
 
+          {/* 交易劇本 */}
+          {tradePlan?.has_data && (
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl shadow-sm p-5 mb-6 text-white">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold flex items-center gap-2"><Target className="w-5 h-5 text-amber-400" />交易劇本</h2>
+                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${tradePlan.direction === "long" ? "bg-red-500/20 text-red-300" : tradePlan.direction === "short" ? "bg-green-500/20 text-green-300" : "bg-slate-500/30 text-slate-300"}`}>
+                  {tradePlan.direction === "long" ? `做多・${tradePlan.setup_type}` : tradePlan.direction === "short" ? "偏空・避開" : "觀望"}
+                </span>
+              </div>
+              {tradePlan.direction === "long" && tradePlan.entry_zone ? (
+                <>
+                  <p className="text-sm text-slate-300 mb-4">{tradePlan.narrative}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-white/5 rounded-lg p-2.5"><div className="text-[11px] text-slate-400">進場區</div><div className="text-sm font-mono font-bold">{tradePlan.entry_zone[0]}–{tradePlan.entry_zone[1]}</div></div>
+                    <div className="bg-white/5 rounded-lg p-2.5"><div className="text-[11px] text-slate-400">停損（{tradePlan.stop_basis === "structure" ? "結構" : "ATR"}）</div><div className="text-sm font-mono font-bold text-green-300">{tradePlan.stop} <span className="text-[10px]">{tradePlan.stop_pct}%</span></div></div>
+                    <div className="bg-white/5 rounded-lg p-2.5"><div className="text-[11px] text-slate-400">目標 ①/②</div><div className="text-sm font-mono font-bold text-red-300">{tradePlan.target1}/{tradePlan.target2}</div></div>
+                    <div className="bg-white/5 rounded-lg p-2.5"><div className="text-[11px] text-slate-400">風報比</div><div className="text-sm font-mono font-bold">{tradePlan.rr}</div></div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mb-4">
+                    {tradePlan.confidence && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">信心</span>
+                        <span className="w-24 h-1.5 rounded-full bg-white/10 overflow-hidden"><span className={`block h-full ${tradePlan.confidence.level === "high" ? "bg-emerald-400" : tradePlan.confidence.level === "medium" ? "bg-amber-400" : "bg-slate-400"}`} style={{ width: `${tradePlan.confidence.score}%` }} /></span>
+                        <span className="text-xs font-mono">{tradePlan.confidence.score}（{tradePlan.confidence.level === "high" ? "高" : tradePlan.confidence.level === "medium" ? "中" : "低"}）</span>
+                      </div>
+                    )}
+                    {tradePlan.invalidation && <span className="text-[11px] text-slate-400">失效：{tradePlan.invalidation.note}</span>}
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (tradePlan.paper_prefill) {
+                        sessionStorage.setItem("paper_prefill", JSON.stringify(tradePlan.paper_prefill));
+                        router.push("/paper");
+                      }
+                    }}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2"
+                  >
+                    <FlaskConical className="w-4 h-4" />以此開模擬單{(tradePlan.suggested_lots ?? 0) > 0 ? `（建議 ${tradePlan.suggested_lots} 張）` : "（張數請依本金調整）"}
+                  </button>
+                </>
+              ) : (
+                <p className="text-sm text-slate-300">{tradePlan.narrative}</p>
+              )}
+            </div>
+          )}
+
           {/* 評分摘要 */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
             <div className="flex items-center justify-between mb-4">
@@ -877,14 +960,15 @@ function TechnicalPageContent() {
             </span>
           </div>
         </div>
-        {structure?.has_data && (
-          <div className="flex items-center gap-2 mb-2 px-1">
+        {(structure?.has_data || tradePlan?.has_data) && (
+          <div className="flex items-center gap-2 mb-2 px-1 flex-wrap">
             <span className="text-xs text-gray-400">疊圖：</span>
-            <button onClick={() => setShowZones((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showZones ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>支撐壓力</button>
-            <button onClick={() => setShowTrend((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showTrend ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>趨勢線/通道</button>
+            {structure?.has_data && <button onClick={() => setShowZones((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showZones ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>支撐壓力</button>}
+            {structure?.has_data && <button onClick={() => setShowTrend((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showTrend ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>趨勢線/通道</button>}
+            {tradePlan?.has_data && tradePlan.direction === "long" && <button onClick={() => setShowPlan((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showPlan ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>交易計畫</button>}
           </div>
         )}
-        <CandlestickChart data={klineData} annotations={[...annotations, ...divergenceAnnotations]} overlays={structureOverlays} height={380} />
+        <CandlestickChart data={klineData} annotations={[...annotations, ...divergenceAnnotations]} overlays={[...structureOverlays, ...(showPlan ? tradePlanOverlays : [])]} height={380} />
       </div>
 
       {/* 結構分析：支撐壓力區帶 */}
