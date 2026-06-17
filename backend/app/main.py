@@ -14,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import init_db, close_db
 from app.utils.ratelimit import limiter
-from app.routers import auth, holdings, stocks, analysis, decision, admin, websocket, watchlist, paper_trades, backtest, notifications, alerts
+from app.routers import auth, holdings, stocks, analysis, decision, admin, websocket, watchlist, paper_trades, backtest, notifications, alerts, market
 # 確保新模型被 ORM metadata 掃描到（create_all 建表）
 import app.models.watchlist  # noqa: F401
 import app.models.score_history  # noqa: F401
@@ -388,6 +388,7 @@ app.include_router(paper_trades.router)
 app.include_router(backtest.router)
 app.include_router(notifications.router)
 app.include_router(alerts.router)
+app.include_router(market.router)
 
 
 @app.get("/")

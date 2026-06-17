@@ -94,6 +94,7 @@ export default function Header() {
         { name: "盤前戰情室", href: "/pre-market", icon: Sun },
         { name: "盤中追蹤", href: "/intraday", icon: Monitor },
         { name: "盤後覆盤", href: "/after-market", icon: Moon },
+        { name: "大盤位階", href: "/market", icon: Activity },
       ],
     },
     { name: "個股分析", href: null as string | null, icon: TrendingUp, isStockSearch: true, children: [] as any[] },
