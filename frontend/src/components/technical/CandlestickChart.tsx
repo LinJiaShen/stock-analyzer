@@ -31,9 +31,31 @@ export interface TechnicalAnnotation {
   price?: number;
 }
 
+/**
+ * 圖表疊圖（結構/交易劇本用）。
+ * 注意：`p1/p2.date` 與 hline/zone 的比對沿用 `data[].date` 的「同一字串空間」——
+ * 呼叫端必須先把後端 ISO 日期經過與 klineData 相同的格式轉換再傳入，否則 findIndex 配不到。
+ */
+export interface ChartOverlay {
+  id: string;
+  kind: "zone" | "line" | "hline";
+  priceLow?: number;   // zone 下緣
+  priceHigh?: number;  // zone 上緣
+  price?: number;      // hline 價位
+  p1?: { date: string; price: number };  // line 端點（同 data[].date 字串）
+  p2?: { date: string; price: number };
+  color?: string;
+  label?: string;
+  dashed?: boolean;
+  opacity?: number;
+}
+
 interface Props {
   data: KLineData[];
   annotations?: TechnicalAnnotation[];
+  overlays?: ChartOverlay[];
+  /** 把疊圖價位納入 Y 軸範圍，避免放大後被裁切（預設 true）。 */
+  fitOverlays?: boolean;
   height?: number;
 }
 
@@ -69,7 +91,7 @@ const annotationLabels: Record<string, string> = {
 const DEFAULT_VIEW = 60; // 預設顯示最近 60 根
 const MIN_VIEW = 10;
 
-export default function CandlestickChart({ data, annotations = [], height = 400 }: Props) {
+export default function CandlestickChart({ data, annotations = [], overlays = [], fitOverlays = true, height = 400 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -133,10 +155,22 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
 
   const priceRange = useMemo(() => {
     if (!visibleData.length) return [0, 1] as [number, number];
-    const min = Math.min(...visibleData.map((d) => d.low)) * 0.995;
-    const max = Math.max(...visibleData.map((d) => d.high)) * 1.005;
-    return [min, max] as [number, number];
-  }, [visibleData]);
+    let lo = Math.min(...visibleData.map((d) => d.low));
+    let hi = Math.max(...visibleData.map((d) => d.high));
+    if (fitOverlays && overlays.length) {
+      const span = hi - lo || hi || 1;
+      const fold = (p: number | undefined, tol: number) => {
+        if (p == null) return;
+        if (p >= lo - span * tol && p <= hi + span * tol) { lo = Math.min(lo, p); hi = Math.max(hi, p); }
+      };
+      for (const o of overlays) {
+        if (o.kind === "hline") fold(o.price, 0.25);            // 進場/停損/目標：較寬容忍、近價必納入
+        else if (o.kind === "zone") { fold(o.priceLow, 0.15); fold(o.priceHigh, 0.15); }
+        else if (o.kind === "line") { fold(o.p1?.price, 0.15); fold(o.p2?.price, 0.15); }
+      }
+    }
+    return [lo * 0.995, hi * 1.005] as [number, number];
+  }, [visibleData, overlays, fitOverlays]);
 
   const volumeMax = useMemo(() =>
     Math.max(...visibleData.map((d) => d.volume)) * 1.3 || 1,
@@ -347,6 +381,29 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
             );
           })}
 
+          {/* Overlay zones（支撐壓力區帶，畫在 K 棒後方） */}
+          {overlays.filter((o) => o.kind === "zone").map((o) => {
+            const color = o.color || "#3b82f6";
+            const yA = priceToY(o.priceHigh ?? 0);
+            const yB = priceToY(o.priceLow ?? 0);
+            const top = Math.min(yA, yB);
+            const bot = Math.max(yA, yB);
+            const topEdge = CHART_TOP;
+            const botEdge = CHART_TOP + CHART_H;
+            if (bot < topEdge) return <text key={o.id} x={SVG_W - PAD.right - 4} y={topEdge + 11} fontSize={10} fill={color} textAnchor="end" fontWeight={600}>▲ {o.label}</text>;
+            if (top > botEdge) return <text key={o.id} x={SVG_W - PAD.right - 4} y={botEdge - 4} fontSize={10} fill={color} textAnchor="end" fontWeight={600}>▼ {o.label}</text>;
+            const cy = Math.max(top, topEdge);
+            const ch = Math.max(Math.min(bot, botEdge) - cy, 1);
+            return (
+              <g key={o.id}>
+                <rect x={PAD.left} y={cy} width={SVG_W - PAD.left - PAD.right} height={ch} fill={color} fillOpacity={o.opacity ?? 0.08} />
+                <line x1={PAD.left} y1={cy} x2={SVG_W - PAD.right} y2={cy} stroke={color} strokeWidth={0.5} strokeDasharray="2 3" opacity={0.5} />
+                <line x1={PAD.left} y1={cy + ch} x2={SVG_W - PAD.right} y2={cy + ch} stroke={color} strokeWidth={0.5} strokeDasharray="2 3" opacity={0.5} />
+                {o.label && <text x={PAD.left + 4} y={cy + 11} fontSize={10} fill={color} fontWeight={600}>{o.label}</text>}
+              </g>
+            );
+          })}
+
           {/* MA Lines */}
           {(["ma5", "ma10", "ma20", "ma60", "ma120"] as const).map((key, i) => {
             const colors = ["#f59e0b", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
@@ -383,6 +440,43 @@ export default function CandlestickChart({ data, annotations = [], height = 400 
                 <rect x={x - candleW / 2} y={volY} width={candleW} height={volH} fill={color} opacity={0.25} rx={1.5} />
                 {i % Math.max(Math.floor(visibleCount / 10), 1) === 0 && (
                   <text x={x} y={height - 10} fontSize={10} fill="#94a3b8" textAnchor="middle">{d.date}</text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Overlay 趨勢線/通道（沿斜率延伸至可見窗兩端） */}
+          {overlays.filter((o) => o.kind === "line").map((o) => {
+            if (!o.p1 || !o.p2) return null;
+            const gi1 = data.findIndex((d) => d.date === o.p1!.date);
+            const gi2 = data.findIndex((d) => d.date === o.p2!.date);
+            if (gi1 < 0 || gi2 < 0 || gi1 === gi2) return null;
+            const slope = (o.p2.price - o.p1.price) / (gi2 - gi1);
+            const priceAt = (gi: number) => o.p1!.price + slope * (gi - gi1);
+            const xAt = (gi: number) => PAD.left + (gi - viewStart) * barW + barW / 2;
+            const color = o.color || "#8b5cf6";
+            return (
+              <line key={o.id} x1={xAt(viewStart)} y1={priceToY(priceAt(viewStart))} x2={xAt(viewEnd)} y2={priceToY(priceAt(viewEnd))}
+                stroke={color} strokeWidth={1.4} strokeDasharray={o.dashed ? "5 3" : undefined} opacity={0.85} />
+            );
+          })}
+
+          {/* Overlay hlines（進場/停損/目標參考線） */}
+          {overlays.filter((o) => o.kind === "hline" && o.price != null).map((o) => {
+            const color = o.color || "#0ea5e9";
+            const y = priceToY(o.price!);
+            const topEdge = CHART_TOP;
+            const botEdge = CHART_TOP + CHART_H;
+            if (y < topEdge) return <text key={o.id} x={SVG_W - PAD.right - 4} y={topEdge + 11} fontSize={10} fill={color} textAnchor="end" fontWeight={600}>▲ {o.label}</text>;
+            if (y > botEdge) return <text key={o.id} x={SVG_W - PAD.right - 4} y={botEdge - 4} fontSize={10} fill={color} textAnchor="end" fontWeight={600}>▼ {o.label}</text>;
+            return (
+              <g key={o.id}>
+                <line x1={PAD.left} y1={y} x2={SVG_W - PAD.right} y2={y} stroke={color} strokeWidth={1.2} strokeDasharray={o.dashed ? "5 3" : "6 3"} opacity={0.9} />
+                {o.label && (
+                  <g>
+                    <rect x={PAD.left + 2} y={y - 9} width={o.label.length * 6.8 + 10} height={14} rx={3} fill={color} fillOpacity={0.14} />
+                    <text x={PAD.left + 6} y={y + 1.5} fontSize={10} fill={color} fontWeight={600}>{o.label}</text>
+                  </g>
                 )}
               </g>
             );

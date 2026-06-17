@@ -15,10 +15,25 @@ import {
   Bar,
   ReferenceLine,
 } from "recharts";
-import CandlestickChart, { type TechnicalAnnotation } from "@/components/technical/CandlestickChart";
+import CandlestickChart, { type TechnicalAnnotation, type ChartOverlay } from "@/components/technical/CandlestickChart";
 import { useStockWebSocket } from "@/hooks/useStockWebSocket";
 import { useIsMarketOpen } from "@/hooks/useIsMarketOpen";
 import api from "@/lib/api";
+
+// 後端 ISO 日期 → 與 klineData 相同的 zh-TW 字串空間（疊圖端點比對用）
+const fmtChartDate = (d: string) =>
+  new Date(d).toLocaleDateString("zh-TW", { year: "2-digit", month: "2-digit", day: "2-digit" }).replace(/\//g, "/");
+
+interface StructureZone { low: number; high: number; center: number; touches: number; strength: number; kind: string; distance_pct: number | null; last_touch_date?: string; }
+interface TrendLine { slope: number; r2: number; p1: { date: string; price: number }; p2: { date: string; price: number }; }
+interface StructureData {
+  has_data: boolean;
+  current_price?: number;
+  atr_14?: number;
+  zones?: StructureZone[];
+  trendlines?: { uptrend: TrendLine | null; downtrend: TrendLine | null; channel: { p1: { date: string; price: number }; p2: { date: string; price: number }; basis: string } | null };
+  range_box?: { top: number; bottom: number } | null;
+}
 
 interface KLineData {
   date: string;
@@ -61,6 +76,9 @@ function TechnicalPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [stockName, setStockName] = useState<string>("");
   const [technicalResult, setTechnicalResult] = useState<TechnicalResult | null>(null);
+  const [structure, setStructure] = useState<StructureData | null>(null);
+  const [showZones, setShowZones] = useState(true);
+  const [showTrend, setShowTrend] = useState(true);
   const [interval, setInterval] = useState<"1d" | "1w" | "1mo">("1d");
   const isMarketOpen = useIsMarketOpen();
 
@@ -115,6 +133,7 @@ function TechnicalPageContent() {
       setLoading(true);
       setError(null);
       setTechnicalResult(null);
+      setStructure(null);
       setStockName("");
       try {
         // 獲取 K 線數據
@@ -194,6 +213,14 @@ function TechnicalPageContent() {
           }
         } catch {
           // 技術分析 API 失敗，使用前端 fallback 計算
+        }
+
+        // 獲取結構分析（支撐壓力區帶 / 趨勢線 / 通道）
+        try {
+          const stRes = await api.get(`/api/analysis/structure/${selectedCode}?interval=${interval}`);
+          setStructure(stRes.data?.has_data ? stRes.data : null);
+        } catch {
+          setStructure(null);
         }
       } catch (err: any) {
         setError(err.response?.data?.detail || "無法獲取數據，請檢查股票代碼");
@@ -366,6 +393,33 @@ function TechnicalPageContent() {
       };
     });
   }, [klineData]);
+
+  // 結構疊圖（支撐壓力區帶 + 趨勢線/通道），日期轉成與 klineData 同字串空間
+  const structureOverlays = useMemo((): ChartOverlay[] => {
+    if (!structure?.has_data) return [];
+    const ovs: ChartOverlay[] = [];
+    if (showZones && structure.zones) {
+      for (const z of structure.zones) {
+        const isSup = z.kind === "support";
+        ovs.push({
+          id: `zone-${z.center}`,
+          kind: "zone",
+          priceLow: z.low,
+          priceHigh: z.high,
+          color: isSup ? "#16a34a" : "#ef4444",
+          label: `${isSup ? "支撐" : "壓力"} ${z.center}`,
+          opacity: 0.06 + (Math.min(z.strength, 100) / 100) * 0.08,
+        });
+      }
+    }
+    if (showTrend && structure.trendlines) {
+      const { uptrend, downtrend, channel } = structure.trendlines;
+      if (uptrend) ovs.push({ id: "tl-up", kind: "line", p1: { date: fmtChartDate(uptrend.p1.date), price: uptrend.p1.price }, p2: { date: fmtChartDate(uptrend.p2.date), price: uptrend.p2.price }, color: "#16a34a", label: "上升趨勢" });
+      if (downtrend) ovs.push({ id: "tl-down", kind: "line", p1: { date: fmtChartDate(downtrend.p1.date), price: downtrend.p1.price }, p2: { date: fmtChartDate(downtrend.p2.date), price: downtrend.p2.price }, color: "#ef4444", label: "下降趨勢" });
+      if (channel) ovs.push({ id: "tl-ch", kind: "line", p1: { date: fmtChartDate(channel.p1.date), price: channel.p1.price }, p2: { date: fmtChartDate(channel.p2.date), price: channel.p2.price }, color: "#8b5cf6", dashed: true });
+    }
+    return ovs;
+  }, [structure, showZones, showTrend]);
 
   // 前端備用技術分析結果 (當 API 無數據時)
   const fallbackTechnicalResult = useMemo((): TechnicalResult => {
@@ -690,8 +744,45 @@ function TechnicalPageContent() {
             </span>
           </div>
         </div>
-        <CandlestickChart data={klineData} annotations={annotations} height={380} />
+        {structure?.has_data && (
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <span className="text-xs text-gray-400">疊圖：</span>
+            <button onClick={() => setShowZones((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showZones ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>支撐壓力</button>
+            <button onClick={() => setShowTrend((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showTrend ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>趨勢線/通道</button>
+          </div>
+        )}
+        <CandlestickChart data={klineData} annotations={annotations} overlays={structureOverlays} height={380} />
       </div>
+
+      {/* 結構分析：支撐壓力區帶 */}
+      {structure?.has_data && (((structure.zones?.length ?? 0) > 0) || structure.range_box) && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+          <h3 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-blue-500" />結構分析 · 支撐壓力區帶
+          </h3>
+          <div className="space-y-1.5">
+            {(structure.zones ?? []).slice().reverse().map((z) => {
+              const isSup = z.kind === "support";
+              return (
+                <div key={z.center} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${isSup ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{isSup ? "支撐" : "壓力"}</span>
+                    <span className="font-mono text-gray-700">{z.low} – {z.high}</span>
+                    <span className="text-xs text-gray-400">{z.touches} 次觸及</span>
+                  </span>
+                  <span className="flex items-center gap-3">
+                    {z.distance_pct != null && <span className={`font-mono text-xs ${z.distance_pct >= 0 ? "text-red-500" : "text-green-600"}`}>{z.distance_pct >= 0 ? "+" : ""}{z.distance_pct}%</span>}
+                    <span className="w-16 h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className="block h-full bg-blue-400" style={{ width: `${z.strength}%` }} /></span>
+                  </span>
+                </div>
+              );
+            })}
+            {structure.range_box && (
+              <div className="text-xs text-gray-500 pt-2 mt-1 border-t border-gray-100">箱型整理區間：{structure.range_box.bottom} – {structure.range_box.top}</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 副圖指標 - RSI + KDJ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
