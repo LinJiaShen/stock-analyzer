@@ -41,6 +41,27 @@ async def get_technical_analysis(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/structure/{stock_code}")
+async def get_structure_analysis(
+    stock_code: str,
+    interval: str = Query("1d", description="K線週期: 1d, 1w, 1mo"),
+    lookback: int = Query(250, ge=40, le=750, description="分析根數上限"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    結構分析：擺盪點、支撐壓力區帶、趨勢線/通道、跳空缺口、箱型整理。
+
+    把技術面從「指標讀數」升級為「結構認知」，供圖表 overlay 與交易劇本使用。
+    """
+    from app.services.structure import StructureService
+
+    service = StructureService(db)
+    try:
+        return await service.analyze(stock_code, interval, lookback)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/chip/{stock_code}")
 async def get_chip_analysis(
     stock_code: str,
