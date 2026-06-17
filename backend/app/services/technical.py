@@ -591,7 +591,99 @@ class TechnicalService:
             "bars_count": len(bars),
         }
 
+    async def multi_timeframe(self, stock_code: str, period: str = "medium") -> dict:
+        """多週期共振：對 1d/1w/1mo 各跑一次 analyze，萃取方向訊號並彙整共振判斷。"""
+        tfs = {}
+        for iv in ("1d", "1w", "1mo"):
+            try:
+                a = await self.analyze(stock_code, period, iv)
+            except Exception:
+                a = {"has_data": False, "interval": iv}
+            sig = tf_signal(a)
+            sig["interval"] = iv
+            tfs[iv] = sig
+        verdict = consensus_verdict(tfs["1d"], tfs["1w"], tfs["1mo"])
+        return {
+            "stock_code": stock_code,
+            "has_data": any(tfs[iv]["has_data"] for iv in tfs),
+            **verdict,
+        }
+
 
 def create_technical_service(db: AsyncSession) -> TechnicalService:
     """建立技術分析服務實例"""
     return TechnicalService(db)
+
+
+def tf_signal(analysis: dict) -> dict:
+    """從單一週期 analyze() 結果萃取方向訊號（trend/ma/macd 各 ±1，vote=-3..+3）。"""
+    if not analysis or not analysis.get("has_data"):
+        return {"interval": (analysis or {}).get("interval"), "has_data": False,
+                "trend": 0, "ma": 0, "macd": 0, "rsi": None, "rsi_zone": "n/a",
+                "adx": None, "adx_regime": "n/a", "adx_dir": None, "vote": 0, "dir": 0}
+    td = analysis.get("trend", {}).get("direction", "") or ""
+    trend = 1 if "上升" in td else (-1 if "下降" in td else 0)
+    ma_s = analysis.get("ma_alignment", "") or ""
+    ma = 1 if "多頭" in ma_s else (-1 if "空頭" in ma_s else 0)
+    hist = analysis.get("macd", {}).get("histogram", 0) or 0
+    macd = 1 if hist > 0 else (-1 if hist < 0 else 0)
+    rsi = analysis.get("rsi", 50) or 50
+    rsi_zone = "overbought" if rsi >= 70 else "oversold" if rsi <= 30 else "neutral"
+    adx = analysis.get("adx", {}) or {}
+    adx_val = adx.get("adx")
+    adx_regime = "trending" if (adx_val and adx_val >= 25) else ("ranging" if (adx_val is not None and adx_val < 20) else "developing")
+    vote = trend + ma + macd
+    return {"interval": analysis.get("interval"), "has_data": True,
+            "trend": trend, "ma": ma, "macd": macd,
+            "rsi": round(float(rsi), 1), "rsi_zone": rsi_zone,
+            "adx": adx_val, "adx_regime": adx_regime, "adx_dir": adx.get("direction"),
+            "vote": vote, "dir": 1 if vote > 0 else (-1 if vote < 0 else 0)}
+
+
+_VERDICT_LABEL = {
+    "aligned_bull": "多頭共振",
+    "aligned_bear": "空頭共振",
+    "pullback_in_uptrend": "多頭回檔（找買點）",
+    "bounce_in_downtrend": "空頭反彈（勿追高）",
+    "conflict": "多空衝突",
+    "mixed": "方向不明",
+}
+
+
+def consensus_verdict(day: dict, week: dict, month: dict) -> dict:
+    """月線定方向、週線定波段、日線定時機 → 共振判斷 + 0-100 共振強度。"""
+    dd, dw, dm = day.get("dir", 0), week.get("dir", 0), month.get("dir", 0)
+    if dm > 0 and dw > 0 and dd > 0:
+        verdict = "aligned_bull"
+    elif dm < 0 and dw < 0 and dd < 0:
+        verdict = "aligned_bear"
+    elif dm >= 0 and dw > 0 and dd <= 0:
+        verdict = "pullback_in_uptrend"
+    elif dm <= 0 and dw < 0 and dd >= 0:
+        verdict = "bounce_in_downtrend"
+    elif (dm > 0 and dw < 0) or (dm < 0 and dw > 0):
+        verdict = "conflict"
+    else:
+        verdict = "mixed"
+    bias = 0.5 * dm + 0.3 * dw + 0.2 * dd
+
+    def w(d):
+        return "偏多" if d > 0 else ("偏空" if d < 0 else "中性")
+
+    advice = {
+        "aligned_bull": "三週期同步偏多，順勢做多。",
+        "aligned_bear": "三週期同步偏空，順勢偏空或觀望。",
+        "pullback_in_uptrend": "大方向偏多、短線回檔，拉回找支撐進場。",
+        "bounce_in_downtrend": "大方向偏空、短線反彈，不宜追高。",
+        "conflict": "月線與週線方向衝突，觀望為宜。",
+        "mixed": "訊號分歧，等待方向明朗。",
+    }[verdict]
+    narrative = f"月線{w(dm)}、週線{w(dw)}、日線{w(dd)}：{advice}"
+    return {
+        "verdict": verdict,
+        "verdict_label": _VERDICT_LABEL[verdict],
+        "bias": round(bias, 2),
+        "alignment_score": round(abs(bias) * 100),
+        "narrative": narrative,
+        "timeframes": {"day": day, "week": week, "month": month},
+    }

@@ -62,6 +62,24 @@ async def get_structure_analysis(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/mtf/{stock_code}")
+async def get_mtf_analysis(
+    stock_code: str,
+    period: str = Query("medium", description="分析週期: short, medium, long"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    多週期共振：日線/週線/月線方向訊號彙整。
+
+    月線定方向、週線定波段、日線定時機；回傳共振判斷 + 0-100 共振強度 + 操作敘述。
+    """
+    service = TechnicalService(db)
+    try:
+        return await service.multi_timeframe(stock_code, period)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/chip/{stock_code}")
 async def get_chip_analysis(
     stock_code: str,

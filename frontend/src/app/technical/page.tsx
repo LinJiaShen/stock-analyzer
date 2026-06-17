@@ -40,6 +40,9 @@ interface StructureData {
   bollinger?: BollingerFeatures;
 }
 
+interface TFSig { interval: string; has_data: boolean; trend: number; ma: number; macd: number; rsi: number | null; rsi_zone: string; adx: number | null; adx_regime: string; dir: number; vote: number; }
+interface MTFData { has_data: boolean; verdict: string; verdict_label: string; bias: number; alignment_score: number; narrative: string; timeframes: { day: TFSig; week: TFSig; month: TFSig }; }
+
 interface KLineData {
   date: string;
   open: number;
@@ -82,6 +85,7 @@ function TechnicalPageContent() {
   const [stockName, setStockName] = useState<string>("");
   const [technicalResult, setTechnicalResult] = useState<TechnicalResult | null>(null);
   const [structure, setStructure] = useState<StructureData | null>(null);
+  const [mtf, setMtf] = useState<MTFData | null>(null);
   const [showZones, setShowZones] = useState(true);
   const [showTrend, setShowTrend] = useState(true);
   const [interval, setInterval] = useState<"1d" | "1w" | "1mo">("1d");
@@ -139,6 +143,7 @@ function TechnicalPageContent() {
       setError(null);
       setTechnicalResult(null);
       setStructure(null);
+      setMtf(null);
       setStockName("");
       try {
         // 獲取 K 線數據
@@ -226,6 +231,14 @@ function TechnicalPageContent() {
           setStructure(stRes.data?.has_data ? stRes.data : null);
         } catch {
           setStructure(null);
+        }
+
+        // 獲取多週期共振（日/週/月）
+        try {
+          const mtfRes = await api.get(`/api/analysis/mtf/${selectedCode}`);
+          setMtf(mtfRes.data?.has_data ? mtfRes.data : null);
+        } catch {
+          setMtf(null);
         }
       } catch (err: any) {
         setError(err.response?.data?.detail || "無法獲取數據，請檢查股票代碼");
@@ -655,6 +668,46 @@ function TechnicalPageContent() {
       {/* 數據內容 */}
       {!loading && !error && (
         <>
+          {/* 多週期共振 */}
+          {mtf?.has_data && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-indigo-600" />多週期共振</h2>
+                <span className={`px-3 py-1 rounded-full text-sm font-semibold ${mtf.bias > 0 ? "bg-red-100 text-red-700" : mtf.bias < 0 ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{mtf.verdict_label}</span>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">{mtf.narrative}</p>
+              <div className="grid grid-cols-3 gap-3">
+                {([["月線", "month"], ["週線", "week"], ["日線", "day"]] as const).map(([label, key]) => {
+                  const tf = mtf.timeframes[key];
+                  const dirColor = tf.dir > 0 ? "text-red-600" : tf.dir < 0 ? "text-green-600" : "text-gray-500";
+                  const dirText = tf.dir > 0 ? "偏多" : tf.dir < 0 ? "偏空" : "中性";
+                  return (
+                    <div key={key} className="rounded-lg border border-gray-100 p-3 text-center">
+                      <div className="text-xs text-gray-400 mb-1">{label}</div>
+                      <div className={`text-lg font-bold ${tf.has_data ? dirColor : "text-gray-300"}`}>{tf.has_data ? dirText : "—"}</div>
+                      {tf.has_data && (
+                        <div className="flex justify-center gap-1 mt-1.5">
+                          {([["趨", "trend"], ["均", "ma"], ["量", "macd"]] as const).map(([t, k]) => {
+                            const v = tf[k];
+                            return <span key={k} title={t} className={`w-5 h-5 rounded text-[10px] flex items-center justify-center font-medium ${v > 0 ? "bg-red-50 text-red-600" : v < 0 ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-400"}`}>{t}</span>;
+                          })}
+                        </div>
+                      )}
+                      {tf.has_data && tf.adx_regime !== "n/a" && (
+                        <div className="text-[10px] text-gray-400 mt-1.5">{tf.adx_regime === "trending" ? "趨勢明確" : tf.adx_regime === "ranging" ? "盤整" : "發展中"}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-xs text-gray-400 whitespace-nowrap">共振強度</span>
+                <span className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className={`block h-full ${mtf.bias > 0 ? "bg-red-400" : mtf.bias < 0 ? "bg-green-400" : "bg-gray-300"}`} style={{ width: `${mtf.alignment_score}%` }} /></span>
+                <span className="font-mono text-xs text-gray-600">{mtf.alignment_score}</span>
+              </div>
+            </div>
+          )}
+
           {/* 評分摘要 */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
             <div className="flex items-center justify-between mb-4">
