@@ -24,7 +24,8 @@ export interface TechnicalAnnotation {
     | "bullish_marubozu" | "bearish_marubozu" | "hammer" | "hanging_man"
     | "inverted_hammer" | "gravestone" | "doji" | "four_price_doji" | "spinning_top"
     | "bullish_engulfing" | "bearish_engulfing" | "morning_star" | "evening_star"
-    | "bullish_island" | "bearish_island";
+    | "bullish_island" | "bearish_island"
+    | "bullish_divergence" | "bearish_divergence" | "bb_squeeze";
   position: "top" | "bottom";
   detail: string;
   pattern: string;
@@ -75,6 +76,7 @@ const annotationColors: Record<string, string> = {
   bearish_marubozu: "#ef4444", hanging_man: "#ef4444", gravestone: "#ef4444",
   bearish_engulfing: "#ef4444", evening_star: "#ef4444", bearish_island: "#ef4444",
   doji: "#94a3b8", four_price_doji: "#94a3b8", spinning_top: "#94a3b8",
+  bullish_divergence: "#10b981", bearish_divergence: "#ef4444", bb_squeeze: "#f59e0b",
 };
 
 const annotationLabels: Record<string, string> = {
@@ -86,6 +88,7 @@ const annotationLabels: Record<string, string> = {
   bullish_engulfing: "多頭吞噬", bearish_engulfing: "空頭吞噬",
   morning_star: "晨星", evening_star: "暮星",
   bullish_island: "島型反轉(多)", bearish_island: "島型反轉(空)",
+  bullish_divergence: "底背離", bearish_divergence: "頂背離", bb_squeeze: "布林擠壓",
 };
 
 const DEFAULT_VIEW = 60; // 預設顯示最近 60 根

@@ -297,6 +297,81 @@ def detect_range_box(bars: list[dict], window: int = 60, band_pct: float = 0.08,
     }
 
 
+def find_divergences(bars: list[dict], rsi: list, macd_hist: list, swings: list[dict] | None = None,
+                     lookback: int = 60, min_gap: int = 4) -> list[dict]:
+    """
+    背離偵測（複用 T1 swings，僅取已確認點）：
+    - 底背離 bullish：價格更低的低點、但 RSI/MACD 更高的低點 → 動能轉強、潛在反轉向上。
+    - 頂背離 bearish：價格更高的高點、但 RSI/MACD 更低的高點 → 動能轉弱、潛在反轉向下。
+    回 [{kind, indicator, p1, p2, strength}]，p* = {date, price, index, ind}。
+    """
+    out: list[dict] = []
+    if swings is None:
+        swings = find_swings(bars)
+    n = len(bars)
+    start = max(0, n - lookback)
+    lows = [s for s in swings if s["kind"] == "low" and not s.get("provisional") and s["index"] >= start]
+    highs = [s for s in swings if s["kind"] == "high" and not s.get("provisional") and s["index"] >= start]
+
+    def val(arr, i):
+        return arr[i] if (arr and 0 <= i < len(arr) and arr[i] is not None) else None
+
+    def pt(s, ind):
+        return {"date": s["date"], "price": s["price"], "index": s["index"],
+                "ind": round(float(ind), 2) if ind is not None else None}
+
+    if len(lows) >= 2:
+        a, b = lows[-2], lows[-1]
+        if b["index"] - a["index"] >= min_gap and b["price"] < a["price"]:
+            for name, arr in (("rsi", rsi), ("macd", macd_hist)):
+                va, vb = val(arr, a["index"]), val(arr, b["index"])
+                if va is not None and vb is not None and vb > va:
+                    out.append({"kind": "bullish", "indicator": name, "p1": pt(a, va), "p2": pt(b, vb),
+                                "strength": round(float(vb - va), 2)})
+                    break
+
+    if len(highs) >= 2:
+        a, b = highs[-2], highs[-1]
+        if b["index"] - a["index"] >= min_gap and b["price"] > a["price"]:
+            for name, arr in (("rsi", rsi), ("macd", macd_hist)):
+                va, vb = val(arr, a["index"]), val(arr, b["index"])
+                if va is not None and vb is not None and vb < va:
+                    out.append({"kind": "bearish", "indicator": name, "p1": pt(a, va), "p2": pt(b, vb),
+                                "strength": round(float(va - vb), 2)})
+                    break
+    return out
+
+
+def bollinger_features(closes: list, period: int = 20, std_dev: float = 2.0, bw_lookback: int = 120) -> dict:
+    """布林帶寬擠壓（bandwidth 百分位 ≤20% 視為 squeeze，常為變盤前兆）+ %B 位置。"""
+    n = len(closes)
+    if n < period:
+        return {"available": False}
+    bws = []
+    for i in range(period - 1, n):
+        w = closes[i - period + 1:i + 1]
+        m = float(np.mean(w))
+        s = float(np.std(w))
+        u, l = m + std_dev * s, m - std_dev * s
+        bws.append((u - l) / m if m else 0.0)
+    w = closes[-period:]
+    m = float(np.mean(w))
+    s = float(np.std(w))
+    upper, middle, lower = m + std_dev * s, m, m - std_dev * s
+    last_bw = bws[-1]
+    recent = bws[-bw_lookback:]
+    rank = sum(1 for x in recent if x <= last_bw) / len(recent)
+    c = closes[-1]
+    return {
+        "available": True,
+        "bandwidth": round(last_bw, 4),
+        "bandwidth_pct": round(rank * 100, 1),
+        "squeeze": rank <= 0.2,
+        "percent_b": round((c - lower) / (upper - lower), 3) if upper > lower else 0.5,
+        "upper": round(upper, 2), "middle": round(middle, 2), "lower": round(lower, 2),
+    }
+
+
 class StructureService:
     """薄 DB 包裝：抓 bars（adjusted_close）→ 聚合 interval → 跑純函式。"""
 
@@ -321,6 +396,9 @@ class StructureService:
         swings = find_swings(bars)
         atr_val = atr(bars)
         cur = bars[-1].get("close") or 0
+        closes = [b.get("close") or 0 for b in bars]
+        rsi = tech._calculate_rsi(closes)
+        macd_hist = tech._calculate_macd(closes).get("histogram", [])
         return {
             "stock_code": stock_code, "interval": interval, "has_data": True,
             "bars_count": len(bars),
@@ -331,5 +409,7 @@ class StructureService:
             "trendlines": trendlines(bars, swings),
             "gaps": detect_gaps(bars),
             "range_box": detect_range_box(bars),
+            "divergences": find_divergences(bars, rsi, macd_hist, swings),
+            "bollinger": bollinger_features(closes),
             "patterns_classic": [],  # T1.5 best-effort 預留
         }

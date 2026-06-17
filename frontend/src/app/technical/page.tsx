@@ -26,6 +26,9 @@ const fmtChartDate = (d: string) =>
 
 interface StructureZone { low: number; high: number; center: number; touches: number; strength: number; kind: string; distance_pct: number | null; last_touch_date?: string; }
 interface TrendLine { slope: number; r2: number; p1: { date: string; price: number }; p2: { date: string; price: number }; }
+interface DivPoint { date: string; price: number; index: number; ind: number | null; }
+interface Divergence { kind: "bullish" | "bearish"; indicator: string; p1: DivPoint; p2: DivPoint; strength: number; }
+interface BollingerFeatures { available: boolean; bandwidth?: number; bandwidth_pct?: number; squeeze?: boolean; percent_b?: number; upper?: number; middle?: number; lower?: number; }
 interface StructureData {
   has_data: boolean;
   current_price?: number;
@@ -33,6 +36,8 @@ interface StructureData {
   zones?: StructureZone[];
   trendlines?: { uptrend: TrendLine | null; downtrend: TrendLine | null; channel: { p1: { date: string; price: number }; p2: { date: string; price: number }; basis: string } | null };
   range_box?: { top: number; bottom: number } | null;
+  divergences?: Divergence[];
+  bollinger?: BollingerFeatures;
 }
 
 interface KLineData {
@@ -421,6 +426,23 @@ function TechnicalPageContent() {
     return ovs;
   }, [structure, showZones, showTrend]);
 
+  // 背離標記（疊在 K 線上，日期轉成與 klineData 同字串空間）
+  const divergenceAnnotations = useMemo((): TechnicalAnnotation[] => {
+    if (!structure?.has_data || !structure.divergences?.length) return [];
+    return structure.divergences.map((d) => {
+      const bull = d.kind === "bullish";
+      return {
+        date: fmtChartDate(d.p2.date),
+        type: (bull ? "bullish_divergence" : "bearish_divergence") as TechnicalAnnotation["type"],
+        position: (bull ? "bottom" : "top") as "top" | "bottom",
+        label: bull ? "底背離" : "頂背離",
+        pattern: `${d.indicator.toUpperCase()} ${bull ? "底" : "頂"}背離`,
+        detail: `價格${bull ? "創更低低點，但" : "創更高高點，但"} ${d.indicator.toUpperCase()} 未同步（強度 ${d.strength}）；動能${bull ? "轉強，留意反彈" : "轉弱，留意拉回"}。`,
+        price: d.p2.price,
+      };
+    });
+  }, [structure]);
+
   // 前端備用技術分析結果 (當 API 無數據時)
   const fallbackTechnicalResult = useMemo((): TechnicalResult => {
     const latestRsi = rsiData[rsiData.length - 1]?.rsi ?? 50;
@@ -751,7 +773,7 @@ function TechnicalPageContent() {
             <button onClick={() => setShowTrend((v) => !v)} className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors ${showTrend ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>趨勢線/通道</button>
           </div>
         )}
-        <CandlestickChart data={klineData} annotations={annotations} overlays={structureOverlays} height={380} />
+        <CandlestickChart data={klineData} annotations={[...annotations, ...divergenceAnnotations]} overlays={structureOverlays} height={380} />
       </div>
 
       {/* 結構分析：支撐壓力區帶 */}
@@ -779,6 +801,53 @@ function TechnicalPageContent() {
             })}
             {structure.range_box && (
               <div className="text-xs text-gray-500 pt-2 mt-1 border-t border-gray-100">箱型整理區間：{structure.range_box.bottom} – {structure.range_box.top}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 動能背離 + 布林擠壓 */}
+      {structure?.has_data && (((structure.divergences?.length ?? 0) > 0) || structure.bollinger?.available) && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+          <h3 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-amber-500" />動能背離 · 布林通道
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <div className="text-xs text-gray-400 mb-1.5">背離訊號</div>
+              {((structure.divergences?.length ?? 0) === 0) ? (
+                <div className="text-sm text-gray-400">目前無明顯背離</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {structure.divergences!.map((d, i) => {
+                    const bull = d.kind === "bullish";
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-sm">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${bull ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{bull ? "底背離" : "頂背離"}</span>
+                        <span className="text-gray-600">{d.indicator.toUpperCase()}</span>
+                        <span className="text-xs text-gray-400">{bull ? "動能轉強、留意反彈" : "動能轉弱、留意拉回"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {structure.bollinger?.available && (
+              <div>
+                <div className="text-xs text-gray-400 mb-1.5">布林通道</div>
+                <div className="flex items-center gap-2 mb-2">
+                  {structure.bollinger.squeeze && <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700">擠壓中（變盤前兆）</span>}
+                  <span className="text-xs text-gray-500">帶寬位階 {structure.bollinger.bandwidth_pct}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">%B</span>
+                  <span className="flex-1 h-1.5 rounded-full bg-gradient-to-r from-green-300 via-gray-200 to-red-300 relative">
+                    <span className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-gray-800 border border-white" style={{ left: `calc(${Math.max(0, Math.min(1, structure.bollinger.percent_b ?? 0.5)) * 100}% - 4px)` }} />
+                  </span>
+                  <span className="font-mono text-xs text-gray-600">{(((structure.bollinger.percent_b ?? 0.5)) * 100).toFixed(0)}%</span>
+                </div>
+                <div className="text-[11px] text-gray-400 mt-1">{(structure.bollinger.percent_b ?? 0.5) > 1 ? "突破上軌（強勢/過熱）" : (structure.bollinger.percent_b ?? 0.5) < 0 ? "跌破下軌（弱勢/超賣）" : "通道內運行"}</div>
+              </div>
             )}
           </div>
         </div>

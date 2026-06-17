@@ -7,6 +7,8 @@ from app.services.structure import (
     trendlines,
     detect_gaps,
     detect_range_box,
+    find_divergences,
+    bollinger_features,
     atr,
 )
 
@@ -104,6 +106,45 @@ def test_range_box_detected():
 def test_range_box_none_when_trending():
     bars = [_bar(100 + i, 101 + i, 99 + i, 100 + i, 1000, f"d{i}") for i in range(60)]
     assert detect_range_box(bars, window=60, band_pct=0.08) is None
+
+
+# ── find_divergences ─────────────────────────────────────────
+def test_divergence_bullish():
+    # 兩個 swing low：index5(低點99)、index14(更低點94)，但 RSI 在第二低點更高 → 底背離
+    prices = [110, 108, 106, 104, 102, 100, 103, 106, 108, 110, 108, 104, 100, 97, 95, 98, 101, 104, 107, 110]
+    bars = [_bar(p, p + 1, p - 1, p, 1000, f"d{i}") for i, p in enumerate(prices)]
+    swings = find_swings(bars, left=3, right=3)
+    rsi = [50.0] * 20
+    rsi[5] = 30.0
+    rsi[14] = 40.0  # 價更低、RSI 更高
+    divs = find_divergences(bars, rsi, [0.0] * 20, swings, min_gap=4)
+    assert any(d["kind"] == "bullish" and d["indicator"] == "rsi" for d in divs)
+
+
+def test_divergence_none_when_confirming():
+    # 價更低、RSI 也更低（量價同步下跌）→ 無底背離
+    prices = [110, 108, 106, 104, 102, 100, 103, 106, 108, 110, 108, 104, 100, 97, 95, 98, 101, 104, 107, 110]
+    bars = [_bar(p, p + 1, p - 1, p, 1000, f"d{i}") for i, p in enumerate(prices)]
+    swings = find_swings(bars, left=3, right=3)
+    rsi = [50.0] * 20
+    rsi[5] = 45.0
+    rsi[14] = 30.0  # RSI 也更低 → 確認下跌、非背離
+    divs = find_divergences(bars, rsi, [0.0] * 20, swings, min_gap=4)
+    assert not any(d["kind"] == "bullish" for d in divs)
+
+
+# ── bollinger_features ───────────────────────────────────────
+def test_bollinger_squeeze():
+    closes = [100 + (5 if i % 2 else -5) for i in range(100)]      # 高波動
+    closes += [100 + (0.3 if i % 2 else -0.3) for i in range(20)]  # 末端低波動 → 擠壓
+    bf = bollinger_features(closes, period=20, std_dev=2.0, bw_lookback=120)
+    assert bf["available"] is True
+    assert bf["squeeze"] is True
+    assert 0 <= bf["percent_b"] <= 1
+
+
+def test_bollinger_insufficient():
+    assert bollinger_features([100, 101, 102]) == {"available": False}
 
 
 # ── atr ──────────────────────────────────────────────────────
