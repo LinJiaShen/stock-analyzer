@@ -739,6 +739,70 @@ function TechnicalPageContent() {
       {/* 數據內容 */}
       {!loading && !error && (
         <>
+          {/* 評分摘要（身分 + 綜合評分 + 子分數，置頂讓使用者先定位） */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{stockName || selectedCode} ({selectedCode}) - 技術面分析</h2>
+                <p className="text-sm text-gray-500">綜合多項技術指標評分 {klineData.length} 根 K 線</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-blue-600">{displayResult.score}</div>
+                  <div className="text-xs text-gray-500">綜合評分{displayResult.regime ? `・${displayResult.regime === "trending" ? "趨勢市" : displayResult.regime === "ranging" ? "盤整市" : "轉折"}` : ""}</div>
+                </div>
+                <div
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                    displayResult.signal === "買入"
+                      ? "bg-green-100 text-green-700"
+                      : displayResult.signal === "賣出"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-yellow-100 text-yellow-700"
+                  }`}
+                >
+                  {displayResult.signal}
+                </div>
+              </div>
+            </div>
+
+            {/* 指標摘要 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">MA 排列</div>
+                <div className="text-sm font-semibold text-gray-900">{displayResult.ma_alignment}</div>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">趨勢</div>
+                <div className="text-sm font-semibold text-gray-900">
+                  {displayResult.trend.direction} ({displayResult.trend.strength}%)
+                </div>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">RSI (14)</div>
+                <div className={`text-sm font-semibold ${displayResult.rsi > 70 ? "text-red-600" : displayResult.rsi < 30 ? "text-green-600" : "text-gray-900"}`}>
+                  {displayResult.rsi.toFixed(1)}
+                </div>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">量比</div>
+                <div className="text-sm font-semibold text-gray-900">{displayResult.volume.ratio.toFixed(2)}x</div>
+              </div>
+            </div>
+            {displayResult.sub_scores && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="text-xs text-gray-400 mb-2">技術子分數（依市場狀態動態加權）</div>
+                <div className="grid grid-cols-3 gap-3">
+                  {([["趨勢", displayResult.sub_scores.trend], ["動能", displayResult.sub_scores.momentum], ["量能", displayResult.sub_scores.volume]] as const).map(([label, val]) => (
+                    <div key={label}>
+                      <div className="flex items-center justify-between mb-1"><span className="text-xs text-gray-600">{label}</span><span className="text-xs font-mono font-semibold text-gray-800">{val}</span></div>
+                      <span className="block h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className={`block h-full ${val >= 60 ? "bg-red-400" : val <= 40 ? "bg-green-400" : "bg-gray-400"}`} style={{ width: `${val}%` }} /></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* 多週期共振 */}
           {mtf?.has_data && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
@@ -866,70 +930,6 @@ function TechnicalPageContent() {
               )}
             </div>
           )}
-
-          {/* 評分摘要 */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">{stockName || selectedCode} ({selectedCode}) - 技術面分析</h2>
-                <p className="text-sm text-gray-500">綜合多項技術指標評分 {klineData.length} 根 K 線</p>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <div className="text-3xl font-bold text-blue-600">{displayResult.score}</div>
-                  <div className="text-xs text-gray-500">綜合評分{displayResult.regime ? `・${displayResult.regime === "trending" ? "趨勢市" : displayResult.regime === "ranging" ? "盤整市" : "轉折"}` : ""}</div>
-                </div>
-                <div
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium ${
-                    displayResult.signal === "買入"
-                      ? "bg-green-100 text-green-700"
-                      : displayResult.signal === "賣出"
-                      ? "bg-red-100 text-red-700"
-                      : "bg-yellow-100 text-yellow-700"
-                  }`}
-                >
-                  {displayResult.signal}
-                </div>
-              </div>
-            </div>
-
-            {/* 指標摘要 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">MA 排列</div>
-                <div className="text-sm font-semibold text-gray-900">{displayResult.ma_alignment}</div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">趨勢</div>
-                <div className="text-sm font-semibold text-gray-900">
-                  {displayResult.trend.direction} ({displayResult.trend.strength}%)
-                </div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">RSI (14)</div>
-                <div className={`text-sm font-semibold ${displayResult.rsi > 70 ? "text-red-600" : displayResult.rsi < 30 ? "text-green-600" : "text-gray-900"}`}>
-                  {displayResult.rsi.toFixed(1)}
-                </div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">量比</div>
-                <div className="text-sm font-semibold text-gray-900">{displayResult.volume.ratio.toFixed(2)}x</div>
-              </div>
-            </div>
-            {displayResult.sub_scores && (
-              <div className="mt-4 pt-4 border-t border-gray-100">
-                <div className="text-xs text-gray-400 mb-2">技術子分數（依市場狀態動態加權）</div>
-                <div className="grid grid-cols-3 gap-3">
-                  {([["趨勢", displayResult.sub_scores.trend], ["動能", displayResult.sub_scores.momentum], ["量能", displayResult.sub_scores.volume]] as const).map(([label, val]) => (
-                    <div key={label}>
-                      <div className="flex items-center justify-between mb-1"><span className="text-xs text-gray-600">{label}</span><span className="text-xs font-mono font-semibold text-gray-800">{val}</span></div>
-                      <span className="block h-1.5 rounded-full bg-gray-100 overflow-hidden"><span className={`block h-full ${val >= 60 ? "bg-red-400" : val <= 40 ? "bg-green-400" : "bg-gray-400"}`} style={{ width: `${val}%` }} /></span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
 
       {/* K 線圖 + MA + 技術標註 */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
@@ -1182,8 +1182,8 @@ function TechnicalPageContent() {
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-gray-900">K 線決策分析</h2>
-            <p className="text-sm text-gray-500">多策略綜合評估 · 即時技術訊號</p>
+            <h2 className="text-xl font-bold text-gray-900">技術指標明細與解讀</h2>
+            <p className="text-sm text-gray-500">各指標數值與白話解讀（操作結論以上方「交易劇本」為準）</p>
           </div>
           <div className="ml-auto flex items-center gap-3">
             <div className="text-right">
@@ -1410,7 +1410,7 @@ function TechnicalPageContent() {
             <p className="text-xs text-orange-600">
               {displayResult.support && displayResult.resistance
                 ? `操作空間：${displayResult.resistance - displayResult.support} 元 (${((displayResult.resistance / displayResult.support - 1) * 100).toFixed(1)}%)`
-                : "布林帶中軌 ({displayResult.bollinger.middle}) 為短期停損參考"}
+                : `布林帶中軌 (${displayResult.bollinger.middle}) 為短期停損參考`}
             </p>
           </div>
         </div>
@@ -1428,85 +1428,6 @@ function TechnicalPageContent() {
           </div>
         )}
     
-        {/* 綜合建議 */}
-        <div className="p-5 bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-xl">
-          <div className="flex items-center gap-3 mb-3">
-            <TrendingUp className="w-6 h-6 text-green-400" />
-            <span className="text-lg font-bold">綜合操作建議</span>
-            <span className={`ml-auto px-3 py-1 rounded-full text-sm font-bold ${
-              displayResult.signal === "買入"
-                ? "bg-green-500/20 text-green-400"
-                : displayResult.signal === "賣出"
-                ? "bg-red-500/20 text-red-400"
-                : "bg-yellow-500/20 text-yellow-400"
-            }`}>
-              {displayResult.signal}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <div className="text-xs text-gray-400 mb-1">評分解讀</div>
-              <p className="text-sm text-gray-200">
-                {displayResult.score >= 75
-                  ? "多項指標強烈共振看多，建議積極操作。"
-                  : displayResult.score >= 65
-                  ? "多項指標共振看多，建議持有或適度加碼。"
-                  : displayResult.score <= 25
-                  ? "多項指標強烈看空，建議空倉避險。"
-                  : displayResult.score <= 35
-                  ? "多項指標看空，建議減倉或停損。"
-                  : "指標Mixed，建議觀望為主，等待明確訊號。"}
-              </p>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400 mb-1">停損參考</div>
-              <p className="text-sm text-gray-200">
-                {displayResult.atr
-                  ? `ATR 停損：現價 - 2×ATR = ${(klineData[klineData.length - 1]?.close - 2 * displayResult.atr).toFixed(0)} 元`
-                  : `布林帶中軌 (${displayResult.bollinger.middle} 元) 附近`}
-              </p>
-            </div>
-            <div>
-              <div className="text-xs text-gray-400 mb-1">目標價位</div>
-              <p className="text-sm text-gray-200">
-                {displayResult.resistance
-                  ? `短期壓力：${displayResult.resistance} 元`
-                  : `布林帶上軌 (${displayResult.bollinger.upper} 元)`}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    
-      {/* 詳細指標數值 - 精簡版 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">詳細指標數值</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">K 值</div>
-            <div className="font-mono font-bold text-blue-600">{displayResult.kdj.k.toFixed(1)}</div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">D 值</div>
-            <div className="font-mono font-bold text-orange-600">{displayResult.kdj.d.toFixed(1)}</div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">J 值</div>
-            <div className="font-mono font-bold text-pink-600">{displayResult.kdj.j.toFixed(1)}</div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">布林上軌</div>
-            <div className="font-mono font-bold text-red-600">{displayResult.bollinger.upper}</div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">布林中軌</div>
-            <div className="font-mono font-bold">{displayResult.bollinger.middle}</div>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-lg text-center">
-            <div className="text-xs text-gray-500 mb-1">布林下軌</div>
-            <div className="font-mono font-bold text-green-600">{displayResult.bollinger.lower}</div>
-          </div>
-        </div>
       </div>
         </>
       )}
